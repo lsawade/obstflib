@@ -1,0 +1,67 @@
+[project]
+# replace with your username:
+name = "obstflib"
+description = "Source time function inversion tools"
+readme = "README.md"
+dynamic = ["version"]
+requires-python = ">=3.10"
+license = {file = "LICENSE", name = "GPLv3+"}
+authors = [
+    {name = "Lucas Sawade", email = "lsawade@princeton.edu" }
+]
+maintainers = [
+  {name = "Lucas Sawade", email = "lsawade@princeton.edu"}
+]
+classifiers = [
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Operating System :: OS Independent"
+]
+keywords = [
+    "Obspy",
+    "Seismology",
+    "Source Time Functions"
+]
+dependencies = [
+    "obspy",
+    "matplotlib",
+    "numpy",
+    "scipy"
+]
+
+[project.optional-dependencies]
+# Add optional dependencies here. For example:
+docs = [
+    "sphinx<6.0",
+    "furo",
+    "sphinx-design",
+    "sphinx_togglebutton",
+    "sphinx_gallery",
+    "numpydoc",
+]
+
+[project.urls]  # Optional
+"Homepage" = "https://github.com/lsawade/obstf"
+"Bug Reports" = "https://github.com/lsawade/obstf/issues"
+"Source" = "https://github.com/lsawade/obstf"
+"Documentation" = "http://lsawade.github.io/obsplotlib"
+
+[project.scripts]  # Optional
+opl = "obsplotlib.__main.__:main"
+
+[tool.setuptools]
+# If there are data files included in your packages that need to be
+# installed, specify them here.
+# package-data = {"obsplotlib" = ["example_data/**"]}
+
+[build-system]
+requires = [
+    "setuptools >= 65",
+    "setuptools_scm[toml]",
+    "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools_scm]
+write_to = "src/obsplotlib/_version.py"
+version_scheme = "release-branch-semver"
