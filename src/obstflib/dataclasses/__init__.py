@@ -1,6 +1,4 @@
-from .cmt import CMTSOLUTION  # noqa: F401
-from .stf import STF, SCARDECSTF  # noqa: F401
+from .cmt import CMTSOLUTION
+from .stf import STF
 
-__all__ = ["STF", "SCARDECSTF", "CMTSOLUTION"]
-
-
+__all__ = ["STF", "CMTSOLUTION"]

@@ -14,3 +14,8 @@ examples/favicon.ico
 scripts/*.pdf
 scripts/*.ndk
 scripts/*.pkl
+*.mseed
+*.xml
+*.pdf
+*.png
+scripts/STF

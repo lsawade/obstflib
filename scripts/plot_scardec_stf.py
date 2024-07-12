@@ -15,10 +15,10 @@ stfdirs = glob(os.path.join(STFDIR, "*"))
 
 # %%
 # Create Scardec STF dataclass
+chile_dir = os.path.join(STFDIR, 'FCTs_20170908_044919_NEAR_COAST_OF_CHIAPAS__MEXICO')
 
-
-STF_opt = osl.SCARDECSTF.fromdir(stfdirs[0], "optimal")
-STF_avg = osl.SCARDECSTF.fromdir(stfdirs[0], "average")
+STF_opt = osl.STF.scardecdir(chile_dir, "optimal")
+STF_avg = osl.STF.scardecdir(chile_dir, "average")
 
 # %%
 # Plot the STF
@@ -28,27 +28,28 @@ plt.rcParams["font.family"] = "Helvetica"
 
 
 def plot_scardec_stf(
-    stf_opt: opl.SCARDECSTF,
-    stf_avg: opl.SCARDECSTF | None = None,
+    stf_opt: osl.STF,
+    stf_avg: osl.STF | None = None,
     color_opt="k",
     color_avg="r",
 ):
     plt.figure(figsize=(7, 3.5))
-    plt.plot(stf_opt.time, stf_opt.moment_rate, label="Optimal STF", c=color_opt)
+    stf_opt.plot(label="Optimal STF", c=color_opt)
     if stf_avg:
-        plt.plot(stf_avg.time, stf_avg.moment_rate, label="Average STF", c=color_avg)
+        stf_avg.plot(label="Average STF", c=color_avg)
     plt.xlabel("Time (s)")
     plt.ylabel("Moment rate (Nm/s)")
     opl.plot_label(
         ax=plt.gca(),
         label=f"{stf_opt.origin} - Mw {stf_opt.Mw} - Depth "
-        f"{stf_opt.depth_in_km} km\n{stf_opt.region}",
+        f"{stf_opt.depth} km\n{stf_opt.region}",
         location=6,
         fontsize="medium",
         box=False,
     )
     plt.subplots_adjust(left=0.1, right=0.9, top=0.85, bottom=0.15)
 
+plot_scardec_stf(STF_opt, STF_avg)
 
 # %%
 
@@ -62,75 +63,33 @@ def M02hdur(M0):
 print(M02hdur(10**24))
 print(M02hdur(10**27))
 
+
 # %%
-
-plot_scardec_stf(STF_opt, STF_avg)
-
-
-def plot_triangular_stf(
-    hdur: float, *args, centroid_time: float = 0.0, M0: float = 1.0, **kwargs
-):
-
-    startpoint = centroid_time - hdur
-    midpoint = centroid_time
-    endpoint = centroid_time + hdur
-
-    # total area under triangle has to be 1
-
-    ax = plt.gca()
-    ax.plot([startpoint, midpoint, endpoint], [0, M0 / hdur, 0], *args, **kwargs)
-
-
-def plot_gaussian_stf(
-    hdur: float,
-    *args,
-    centroid_time: float = 0.0,
-    M0: float = 1.0,
-    alpha: float = 1.628,
-    **kwargs,
-):
-
-    # Time vector +
-    t = np.arange(-1.5 * hdur, 1.5 * hdur, 0.01) + centroid_time
-
-    # Exponent for the Gaussian
-    exponent = -((alpha * (t - centroid_time) / hdur) ** 2)
-
-    # Are under the Gaussen -> M0
-    gaussian = M0 * alpha / (np.sqrt(np.pi) * hdur) * np.exp(exponent)
-
-    ax = plt.gca()
-    ax.plot(t, gaussian, *args, **kwargs)
-
-
 # Info from globalcmt.org
-origin = obspy.UTCDateTime(2017, 9, 8, 4, 49, 19.20)
-timeshift = 27.4500
-M0 = 2.826165954079838e28
-halfduration = 32.0000
-centroidtime = origin + timeshift
+cmt = osl.CMTSOLUTION.read(os.path.join(chile_dir, "CMTSOLUTION"))
+
+t = STF_opt.t
 
 # Get centroid time with respect to SCARDEC Origin
-cmt_time_scardec: float = centroidtime - STF_opt.origin
+cmt_time_scardec: float = cmt.cmt_time - STF_opt.origin
 
-plot_triangular_stf(
-    halfduration,
-    "k--",
-    centroid_time=cmt_time_scardec,
-    M0=(M0 / 1e7),
-    label="GCMT",
-)
+# Time vector for plotting
+t = np.arange(-1.5 * cmt.hdur, 1.5 * cmt.hdur, 0.01) + cmt_time_scardec
 
-plot_gaussian_stf(
-    hdur=halfduration,
-    centroid_time=cmt_time_scardec,
-    M0=(M0 / 1e7),
-    alpha=1.628,
-    label="SF3DG",
-)
+# Plot triangular STF
+stf_tri = osl.STF.triangle(origin=STF_opt.origin, t=t,
+                           hdur=cmt.hdur, tshift=0.0, tc=cmt_time_scardec,
+                           M0=M0 / 1e7)
+stf_tri.plot(label="GCMT", c="k", ls="--")
 
+stf_gau = osl.STF.gaussian(origin=STF_opt.origin, t=t,
+                           hdur=cmt.hdur, tshift=0.0, tc=cmt_time_scardec,
+                           M0=M0 / 1e7)
+stf_gau.plot(label="SF3DG", c="tab:blue", ls="--")
+
+plt.ylim(0, None)
 plt.legend(loc="upper right", frameon=False)
-
+plt.savefig('test_stf_plot.pdf')
 
 # %%
 
@@ -139,8 +98,10 @@ stfs_avg = []
 gcmts = []
 
 for _stfdir in stfdirs:
-    stfs_opt.append(opl.SCARDECSTF.fromdir(_stfdir, "optimal"))
-    stfs_avg.append(opl.SCARDECSTF.fromdir(_stfdir, "average"))
+    if "FCTs" not in _stfdir:
+        continue
+    stfs_opt.append(osl.STF.scardecdir(_stfdir, "optimal"))
+    stfs_avg.append(osl.STF.scardecdir(_stfdir, "average"))
     gcmts.append(opl.CMTSOLUTION.read(_stfdir + "/CMTSOLUTION"))
 
 # %%
@@ -217,29 +178,27 @@ def plot_single_stf(stf_opt, stf_avg, gcmt, pdf=False):
         M0=stf_opt.M0 * 1e7,  # Convert to dyn*cm
         latitude=stf_opt.latitude,
         longitude=stf_opt.longitude,
-        depth=stf_opt.depth_in_km,
+        depth=stf_opt.depth,
     )
 
-    # Plot the triangular STF as used in GCMT analysis
-    plot_triangular_stf(
-        gcmt.hdur,
-        c=color_tri,
-        ls="--",
-        centroid_time=gcmt.cmt_time - stf_opt.origin,
-        M0=(gcmt.M0 / 1e7),
-        label="GCMT",
-    )
+    # Get centroid time with respect to SCARDEC Origin
+    cmt_time_scardec: float = gcmt.cmt_time - stf_opt.origin
 
-    # Plot Gaussian STF as used in SF3DG
-    plot_gaussian_stf(
-        hdur=gcmt.hdur,
-        centroid_time=gcmt.cmt_time - stf_opt.origin,
-        M0=(gcmt.M0 / 1e7),
-        alpha=1.628,
-        label="SF3DG",
-        c=color_gauss,
-        ls="--",
-    )
+    # Time vector for plotting
+    t = np.arange(-1.5 * gcmt.hdur, 1.5 * gcmt.hdur, 0.01) + cmt_time_scardec
+
+    # Plot triangular STF
+    stf_tri = osl.STF.triangle(origin=stf_opt.origin, t=t,
+                            hdur=gcmt.hdur, tshift=0.0, tc=cmt_time_scardec,
+                            M0=gcmt.M0 / 1e7)
+    stf_tri.plot(label="GCMT", c=color_tri, ls="--")
+
+    # Plot Specfem style Gaussian STF.
+    stf_gau = osl.STF.gaussian(origin=stf_opt.origin, t=t,
+                            hdur=gcmt.hdur, tshift=0.0, tc=cmt_time_scardec,
+                            M0=gcmt.M0 / 1e7)
+    stf_gau.plot(label="SF3DG", c=color_gauss, ls="--")
+
     ax = plt.gca()
 
     if pdf:

@@ -55,13 +55,13 @@ opl = "obsplotlib.__main.__:main"
 # installed, specify them here.
 # package-data = {"obsplotlib" = ["example_data/**"]}
 
-[build-system]
-requires = [
-    "setuptools >= 65",
-    "setuptools_scm[toml]",
-    "wheel"]
-build-backend = "setuptools.build_meta"
+# [build-system]
+# requires = [
+#     "setuptools >= 65",
+#     "setuptools_scm[toml]",
+#     "wheel"]
+# build-backend = "setuptools.build_meta"
 
-[tool.setuptools_scm]
-write_to = "src/obsplotlib/_version.py"
-version_scheme = "release-branch-semver"
+# [tool.setuptools_scm]
+# write_to = "src/obsplotlib/_version.py"
+# version_scheme = "release-branch-semver"

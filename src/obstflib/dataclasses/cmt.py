@@ -124,6 +124,34 @@ class CMTSOLUTION:
             Mtp=Mtp,
         )
 
+    def to_gf3d(self):
+        """Converts the CMTSOLUTION to a gf3d file"""
+        from gf3d.source import CMTSOLUTION as gf3d_CMTSOLUTION
+
+        return gf3d_CMTSOLUTION(
+            origin_time=self.origin_time,
+            pde_lat=self.pde_lat,
+            pde_lon=self.pde_lon,
+            pde_depth=self.pde_depth,
+            mb=self.mb,
+            ms=self.ms,
+            region_tag=self.region_tag,
+            eventname=self.eventname,
+            time_shift=self.time_shift,
+            hdur=self.hdur,
+            latitude=self.latitude,
+            longitude=self.longitude,
+            depth=self.depth,
+            Mrr=self.Mrr,
+            Mtt=self.Mtt,
+            Mpp=self.Mpp,
+            Mrt=self.Mrt,
+            Mrp=self.Mrp,
+            Mtp=self.Mtp,
+        )
+
+
+
     @classmethod
     def read(cls, infile: str):
         """Reads CMT solution file
