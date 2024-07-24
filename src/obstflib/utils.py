@@ -135,9 +135,12 @@ def check_meta(ds):
         print(f"{meta.codes[i]}: {meta.distances[i]:.2f} dg -- {meta.attributes.arrivals.Love.min[i] - meta.attributes.arrivals.Love.max[i]:.2f} s")
 
 
-
 def next_power_of_2(x):
-    return int(1) if x == 0 else int(2**np.ceil(np.log2(x)))
+    return 1 if x == 0 else 2 ** (x - 1).bit_length()
+
+
+def gaussn(x, mu, sigma):
+    return 1 / (sigma * np.sqrt(2*np.pi)) * np.exp(-0.5 * ((x - mu) / sigma) ** 2)
 
 
 def get_distances_azimuths(cmt, meta):
@@ -339,3 +342,63 @@ def reindex_dict(meta, idx, N_original=None, debug=False):
     return outmeta
 
 
+
+
+def find_elbow_point(k, curve):
+    """Finds the elbow point of an L-Curve."""
+
+    # Get number of points
+    nPoints = len(curve)
+    
+    # Make vector with all the coordinates
+    allCoord = np.vstack((k, curve)).T
+    
+    # First point is the first coordinate (top-left of the curve)
+    firstPoint = allCoord[0]
+    
+    # Compute the vector pointing from first to last point
+    lineVec = allCoord[-1] - allCoord[0]
+    
+    # Normalize the line vector
+    lineVecNorm = lineVec / np.sqrt(np.sum(lineVec**2))
+    
+    # Compute the vector from first point to all points
+    vecFromFirst = allCoord - firstPoint
+    
+    # Compute the projection length of the projection of p onto b
+    scalarProduct = np.sum(vecFromFirst * np.tile(lineVecNorm, (nPoints, 1)), axis=1)
+
+    # Compute the vector on unit b by using the projection length
+    vecFromFirstParallel = np.outer(scalarProduct, lineVecNorm)
+    
+    # Compute the vector from first to parallel line 
+    vecToLine = vecFromFirst - vecFromFirstParallel
+    
+    # Compute the distance to the line
+    distToLine = np.sqrt(np.sum(vecToLine**2, axis=1))
+    
+    # Get the index
+    idxOfBestPoint = np.argmax(distToLine)
+    
+    return idxOfBestPoint
+
+
+def find_Tmax(tmaxs, costs, grads, Npad=150):
+    """Finds the elbow point of an L-Curve for the source time function problem.
+    We are padding the L-curve to ensure that the elbow point on the lower side of the elbow."""
+    
+    _cost = np.pad(costs, (0, Npad), 'constant', constant_values=(0, 0))
+    _grad = np.pad(grads, (0, Npad), 'constant', constant_values=(0, 0))
+    
+    # extend the duration values by Npad
+    dt = tmaxs[1] - tmaxs[0]
+    _tmax = np.hstack([tmaxs, tmaxs[-1] + np.arange(1, Npad+1)*dt])
+
+    # Get elbow points
+    ic = find_elbow_point(_tmax, _cost) + 1
+    ig = find_elbow_point(_tmax, _grad) + 1
+    
+    # Choose the maximum of the grad and cost elbow
+    imax = np.max([ic, ig])
+    
+    return imax

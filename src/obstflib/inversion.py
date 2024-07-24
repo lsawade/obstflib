@@ -9,13 +9,7 @@ import numpy as np
 import scipy.optimize as so
 from scipy.fftpack import fft, ifft
 
-
-def next_power_of_2(x):
-    return 1 if x == 0 else 2 ** (x - 1).bit_length()
-
-
-def gaussn(x, mu, sigma):
-    return 1 / (sigma * np.sqrt(2*np.pi)) * np.exp(-0.5 * ((x - mu) / sigma) ** 2)
+from .utils import next_power_of_2, gaussn
 
 
 class Inversion(object):
@@ -30,6 +24,7 @@ class Inversion(object):
     penalty_weight = 1.0
     smooth_weight = 1.0
     bound_weight = 1.0
+    verbose: bool = False
 
     def __init__(self, t, data, G, config=None):
 
@@ -270,7 +265,8 @@ class Inversion(object):
         C1 = self.loss_norm(c)
         C2 = self.loss_integral_penalty(c)
         C3 = self.cost_smoothness_first_order(c)
-        print(f"C1={C1:g}, C2={C2:g}, C3={C3:g}")
+        if self.verbose:
+            print(f"C1={C1:g}, C2={C2:g}, C3={C3:g}")
         return self.weight * C1 + self.penalty_weight * C2 + self.smooth_weight * C3
 
     def grad_int_smooth1(self, c):
@@ -307,7 +303,8 @@ class Inversion(object):
         C3 = self.cost_smoothness_first_order(c)
         C4 = self.cost_bound0(c)
         C5 = self.cost_boundN(c)
-        # print(f"C1={C1:g}, C2={C2:g}, C3={C3:g}, C4={C4:g}, C5={C5:g}")
+        if self.verbose:
+            print(f"C1={C1:g}, C2={C2:g}, C3={C3:g}, C4={C4:g}, C5={C5:g}")
         return (
             self.weight * C1
             + self.penalty_weight * C2
@@ -425,7 +422,7 @@ class Inversion(object):
             self.loss_int_smooth1_bound0,
             x,
             jac=self.grad_int_smooth1_bound0,
-            method="CG",
+            method="BFGS",
             options={"maxiter": self.maxiter},
             # bounds=[(0, 1)] * len(x),
         )
@@ -447,7 +444,7 @@ class Inversion(object):
             self.loss_int_smooth1_bound0N,
             x,
             jac=self.grad_int_smooth1_bound0N,
-            method="CG",
+            method="BFGS",
             options={"maxiter": self.maxiter},
             # bounds=[(0, 1)] * len(x),
         )

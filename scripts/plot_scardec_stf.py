@@ -66,26 +66,27 @@ print(M02hdur(10**27))
 
 # %%
 # Info from globalcmt.org
-cmt = osl.CMTSOLUTION.read(os.path.join(chile_dir, "CMTSOLUTION"))
+gcmt = osl.CMTSOLUTION.read(os.path.join(chile_dir, "CMTSOLUTION"))
+cmt3 = osl.CMTSOLUTION.read(glob(os.path.join(chile_dir, "*_CMT3D+"))[0])
 
 t = STF_opt.t
 
 # Get centroid time with respect to SCARDEC Origin
-cmt_time_scardec: float = cmt.cmt_time - STF_opt.origin
+cmt_time_scardec: float = gcmt.cmt_time - STF_opt.origin
 
 # Time vector for plotting
-t = np.arange(-1.5 * cmt.hdur, 1.5 * cmt.hdur, 0.01) + cmt_time_scardec
+t = np.arange(-1.5 * gcmt.hdur, 1.5 * gcmt.hdur, 0.01) + cmt_time_scardec
 
 # Plot triangular STF
 stf_tri = osl.STF.triangle(origin=STF_opt.origin, t=t,
-                           hdur=cmt.hdur, tshift=0.0, tc=cmt_time_scardec,
-                           M0=M0 / 1e7)
+                           hdur=gcmt.hdur, tshift=0.0, tc=cmt_time_scardec,
+                           M0=gcmt.M0 / 1e7)
 stf_tri.plot(label="GCMT", c="k", ls="--")
 
 stf_gau = osl.STF.gaussian(origin=STF_opt.origin, t=t,
-                           hdur=cmt.hdur, tshift=0.0, tc=cmt_time_scardec,
-                           M0=M0 / 1e7)
-stf_gau.plot(label="SF3DG", c="tab:blue", ls="--")
+                           hdur=gcmt.hdur, tshift=0.0, tc=cmt_time_scardec,
+                           M0=cmt3.M0 / 1e7)
+stf_gau.plot(label="CMT3D+", c="tab:blue", ls="--")
 
 plt.ylim(0, None)
 plt.legend(loc="upper right", frameon=False)
@@ -96,14 +97,20 @@ plt.savefig('test_stf_plot.pdf')
 stfs_opt = []
 stfs_avg = []
 gcmts = []
+cmt3s = []
 
 for _stfdir in stfdirs:
     if "FCTs" not in _stfdir:
         continue
-    stfs_opt.append(osl.STF.scardecdir(_stfdir, "optimal"))
-    stfs_avg.append(osl.STF.scardecdir(_stfdir, "average"))
-    gcmts.append(opl.CMTSOLUTION.read(_stfdir + "/CMTSOLUTION"))
-
+    try:
+        cmt3s.append(opl.CMTSOLUTION.read(glob(os.path.join(_stfdir, "*_CMT3D+"))[0]))
+        stfs_opt.append(osl.STF.scardecdir(_stfdir, "optimal"))
+        stfs_avg.append(osl.STF.scardecdir(_stfdir, "average"))
+        gcmts.append(opl.CMTSOLUTION.read(_stfdir + "/CMTSOLUTION"))
+    except IndexError:
+        print(f"IndexError: {_stfdir}")
+        continue
+    
 # %%
 
 
@@ -158,7 +165,7 @@ def plotb(
     pax.add_collection(bb)
 
 
-def plot_single_stf(stf_opt, stf_avg, gcmt, pdf=False):
+def plot_single_stf(stf_opt, stf_avg, gcmt, cmt3, pdf=False):
 
     color_opt = "tab:blue"
     color_avg = "tab:orange"
@@ -182,22 +189,23 @@ def plot_single_stf(stf_opt, stf_avg, gcmt, pdf=False):
     )
 
     # Get centroid time with respect to SCARDEC Origin
-    cmt_time_scardec: float = gcmt.cmt_time - stf_opt.origin
+    gcmt_time_scardec: float = gcmt.cmt_time - stf_opt.origin
+    cmt3_time_scardec: float = cmt3.cmt_time - stf_opt.origin
 
     # Time vector for plotting
-    t = np.arange(-1.5 * gcmt.hdur, 1.5 * gcmt.hdur, 0.01) + cmt_time_scardec
+    t = np.arange(-1.5 * gcmt.hdur, 1.5 * gcmt.hdur, 0.01) + gcmt_time_scardec
 
     # Plot triangular STF
     stf_tri = osl.STF.triangle(origin=stf_opt.origin, t=t,
-                            hdur=gcmt.hdur, tshift=0.0, tc=cmt_time_scardec,
+                            hdur=gcmt.hdur, tshift=0.0, tc=gcmt_time_scardec,
                             M0=gcmt.M0 / 1e7)
     stf_tri.plot(label="GCMT", c=color_tri, ls="--")
 
     # Plot Specfem style Gaussian STF.
     stf_gau = osl.STF.gaussian(origin=stf_opt.origin, t=t,
-                            hdur=gcmt.hdur, tshift=0.0, tc=cmt_time_scardec,
-                            M0=gcmt.M0 / 1e7)
-    stf_gau.plot(label="SF3DG", c=color_gauss, ls="--")
+                            hdur=cmt3.hdur, tshift=0.0, tc=cmt3_time_scardec,
+                            M0=cmt3.M0 / 1e7)
+    stf_gau.plot(label="CMT3D+", c=color_gauss, ls="--")
 
     ax = plt.gca()
 
@@ -211,6 +219,17 @@ def plot_single_stf(stf_opt, stf_avg, gcmt, pdf=False):
     plotb(
         0.075,
         0.85,
+        fm_scardec.tensor,
+        linewidth=0.25,
+        width=width,
+        facecolor=color_opt,
+        normalized_axes=True,
+        ax=ax,
+    )
+    
+    plotb(
+        0.075,
+        0.6,
         gcmt.tensor,
         linewidth=0.25,
         width=width,
@@ -221,11 +240,11 @@ def plot_single_stf(stf_opt, stf_avg, gcmt, pdf=False):
 
     plotb(
         0.075,
-        0.6,
-        fm_scardec.tensor,
+        0.35,
+        cmt3.tensor,
         linewidth=0.25,
         width=width,
-        facecolor=color_opt,
+        facecolor=color_gauss,
         normalized_axes=True,
         ax=ax,
     )
@@ -236,7 +255,7 @@ def plot_single_stf(stf_opt, stf_avg, gcmt, pdf=False):
     plt.show(block=False)
 
 
-plot_single_stf(stfs_opt[0], stfs_avg[0], gcmts[0])
+plot_single_stf(stfs_opt[0], stfs_avg[0], gcmts[0], cmt3s[0])
 
 
 # %%
@@ -246,12 +265,12 @@ def plot_all_stfs(stfs_opt, stfs_avg, gcmts, outdir="./STF_plots"):
     os.makedirs(outdir, exist_ok=True)
 
     # Loop over the STFs and GCMTs
-    for stf_opt, stf_avg, gcmt in zip(stfs_opt, stfs_avg, gcmts):
+    for stf_opt, stf_avg, gcmt, cmt3 in zip(stfs_opt, stfs_avg, gcmts, cmt3s):
 
         print(gcmt.eventname)
 
         # Plot single stf
-        plot_single_stf(stf_opt, stf_avg, gcmt, pdf=True)
+        plot_single_stf(stf_opt, stf_avg, gcmt, cmt3, pdf=True)
         plt.savefig(os.path.join(outdir, f"{gcmt.eventname}.pdf"))
         plt.close("all")
 

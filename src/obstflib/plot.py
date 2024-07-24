@@ -41,8 +41,16 @@ def set_time_scaling(t):
 
 def plot_check_section(dss, labels=['Observed','Synthetic'],
                        component = 'Z', mindist=30.0, maxdist=np.inf,scale=1.0,
-                       outfile = 'atestsection.pdf', limits = None, start_idx=0, step_idx=1, end_idx=1000000,
-                       plot_misfit_reduction=False,
+                       limits = None, start_idx=0, step_idx=1, end_idx=1000000,
+                       plot_misfit_reduction=False, 
+                       colors = ['k', 'tab:red', 'tab:blue', 'tab:orange'],
+                       lw = 0.75,
+                       fill=False,
+                       fillcolors = ['k', 'tab:red', 'tab:blue', 'tab:orange'],
+                       fillkwargs: dict = {},
+                       azi: bool = False,
+                       plot_real_distance: bool = False,
+                       remove_spines: bool = True,
                        legendkwargs: dict = {}):
 
     # Check if the first dataset has an origin time attribute
@@ -63,8 +71,6 @@ def plot_check_section(dss, labels=['Observed','Synthetic'],
     xlabel = f"{xlabel} [{unit}]"
     xlim = (xlim[0] / tscale, xlim[1] / tscale)
 
-    # Get trace colors 
-    colors = ['k', 'tab:red', 'tab:blue', 'tab:orange']
     
     # Create figure
     ax = plt.gca()
@@ -76,7 +82,10 @@ def plot_check_section(dss, labels=['Observed','Synthetic'],
     for i, ds in enumerate(dss):
         idx = np.where((ds.meta.stations.distances > mindist) &
                        (ds.meta.stations.distances < maxdist))[0]
-        idx2 = np.argsort(ds.meta.stations.distances[idx])
+        if azi:
+            idx2 = np.argsort(ds.meta.stations.azimuths[idx])
+        else:
+            idx2 = np.argsort(ds.meta.stations.distances[idx])
         
         # Get the positions in the array
         pos = idx[idx2]
@@ -88,7 +97,13 @@ def plot_check_section(dss, labels=['Observed','Synthetic'],
         ic = ds.meta.components.index(component)
 
         # Offset seismograms by value of one
-        x = np.arange(len(pos))
+        if plot_real_distance:
+            if azi:
+                x = ds.meta.stations.azimuths[pos]
+            else:
+                x = ds.meta.stations.distances[pos]            
+        else:
+            x = np.arange(len(pos))
         
         # Seismogram array to be plotted
         y = scale * ds.data[pos, ic, :].T + x
@@ -100,17 +115,31 @@ def plot_check_section(dss, labels=['Observed','Synthetic'],
         minY = np.minimum(_minY, minY)
         maxY = np.maximum(_maxY, maxY)
         
-        ax.plot((ds.t + tshift)/tscale, y, c=colors[i], lw=0.75)
-        ax.plot([],[], c=colors[i], label=labels[i], lw=0.75)
+        if fill:
+            # Note that we make the zorder dependent on x since ax is growing but the 
+            # data are not sorted
+            xM = np.max(x)
+            for _i, (_y,_x) in enumerate(zip(y.T, x)):
+                zorder = xM - _x 
+                ax.fill_between((ds.t + tshift)/tscale, _x, _y, fc=fillcolors[i], **fillkwargs, zorder=zorder-0.0001, clip_on=True)
+                ax.plot((ds.t + tshift)/tscale, _y, c=colors[i], lw = lw, clip_on=True, zorder=zorder)
+        else:
+            ax.plot((ds.t + tshift)/tscale, y, c=colors[i], lw = lw)
+            ax.plot([],[], c=colors[i], label=labels[i], lw = lw)
 
     # Splitup network and station codes 
     netcodes = [_code.split('.')[0] for _code in dss[0].meta.stations.codes]
     stacodes = [_code.split('.')[1] for _code in dss[0].meta.stations.codes]
     
     # Get ytick labels
-    ax.set_yticks(x, [f"{netcodes[i]:>2s}.{stacodes[i]:<4s}: {dss[-1].meta.stations.distances[i]:6.2f}" for i in pos],
-            rotation=0, fontsize='small')
-    
+    if not plot_real_distance:
+        if azi:
+            ax.set_yticks(x, [f"{netcodes[i]:>2s}.{stacodes[i]:<4s}: {dss[-1].meta.stations.azimuths[i]:6.2f}" for i in pos],
+                    rotation=0, fontsize='small')
+        else: 
+            ax.set_yticks(x, [f"{netcodes[i]:>2s}.{stacodes[i]:<4s}: {dss[-1].meta.stations.distances[i]:6.2f}" for i in pos],
+                    rotation=0, fontsize='small')
+        
     # Compute misfit reduction only if three datasets are provided
     if plot_misfit_reduction and len(dss) == 3:
         
@@ -134,12 +163,13 @@ def plot_check_section(dss, labels=['Observed','Synthetic'],
                  transform=ax.transAxes)
 
         # Create a twin axis on the right side with misfit reduction
-        twin_ax = ax.twinx()
-        twin_ax.spines['left'].set_visible(False)
-        twin_ax.spines['right'].set_visible(False)
-        twin_ax.spines['top'].set_visible(False)
-        twin_ax.spines['bottom'].set_visible(False)
-        twin_ax.tick_params(axis='both', left=False, right=False, top=False, bottom=False)
+        if remove_spines:
+            twin_ax = ax.twinx()
+            twin_ax.spines['left'].set_visible(False)
+            twin_ax.spines['right'].set_visible(False)
+            twin_ax.spines['top'].set_visible(False)
+            twin_ax.spines['bottom'].set_visible(False)
+            twin_ax.tick_params(axis='both', left=False, right=False, top=False, bottom=False)
         
         twin_ax.set_yticks(x,[f"{misfit_reduction[i]:>3.0f}%" for i in pos],
             rotation=0, fontsize='small')
@@ -150,12 +180,13 @@ def plot_check_section(dss, labels=['Observed','Synthetic'],
     ax.legend(**_legendkwargs)
     
     # Remove left, right and top spines
-    ax.spines['left'].set_visible(False)
-    ax.spines['right'].set_visible(False)
-    ax.spines['top'].set_visible(False)
-    
-    # Remove ticks on the left
-    ax.tick_params(axis='y', left=False)
+    if remove_spines:
+        ax.spines['left'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.spines['top'].set_visible(False)
+        
+        # Remove ticks on the left
+        ax.tick_params(axis='y', left=False)
         
     # Set x axis limits and labels
     ax.set_xlabel(xlabel)
@@ -171,8 +202,274 @@ def plot_check_section(dss, labels=['Observed','Synthetic'],
     
     return ax
     
+# Function to plot a beach ball into a specific axis
+
+def plotb(
+    x,
+    y,
+    tensor,
+    linewidth=0.25,
+    width=100,
+    facecolor="k",
+    clip_on=True,
+    alpha=1.0,
+    normalized_axes=True,
+    ax=None,
+    pdf=False,
+    **kwargs,
+):
+
+    from matplotlib import transforms
+    from obspy.imaging.beachball import beach as obspy_beach
+
+    if normalized_axes or ax is None:
+        if ax is None:
+            ax = plt.gca()
+        pax = opl.axes_from_axes(ax, 948230, extent=[0, 0, 1, 1], zorder=10)
+        pax.set_xlim(0, 1)
+        pax.set_ylim(0, 1)
+        pax.axis("off")
+    else:
+        if ax is None:
+            ax = plt.gca()
+        pax = ax
+        
+    if pdf:
+        # This ratio original width * (pdf_dpi / figure_dpi / 2)
+        # No idea where the 2 comes from. It's a magic number
+        width = width * (72 / 100 / 2)
+    else:
+        width = width
+
+    # Plot beach ball
+    bb = obspy_beach(
+        tensor,
+        linewidth=linewidth,
+        facecolor=facecolor,
+        bgcolor="w",
+        edgecolor="k",
+        alpha=alpha,
+        xy=(x, y),
+        width=width,
+        size=100,  # Defines number of interpolation points
+        axes=pax,
+        **kwargs,
+    )
+    bb.set(clip_on=clip_on)
+
+    # # This fixes pdf output issue
+    # bb.set_transform(transforms.Affine2D(np.identity(3)))
+
+    pax.add_collection(bb)
+
+    
+def plot_full_section(dss, labels, stfs, mt, stf_scale=1e23, scale=5.0, limits=[0*60,60*60], outfile='full_section.pdf',
+                      component='Z'):
+        
+    fig = plt.figure()
+
+    ax = plot_check_section(dss, labels=labels, component=component,
+                    scale=scale, start_idx=0, step_idx=1, limits=limits, plot_misfit_reduction=True,
+                    legendkwargs=dict(loc='center right', bbox_to_anchor=(1.0, 1.0), borderaxespad=0.0, 
+                                        columnspacing=1.0, fontsize='small'))
+
+    opl.plot_label(ax, '(c)', fontsize='small', location=12, box=False, dist=0.01, fontweight='bold', zorder=10)
+    
+    colors = ['k', 'tab:red', 'tab:blue', 'tab:orange']
+    subax = opl.axes_from_axes(ax, 12341, [0.0, 1.0, 0.35, 0.075])
+    
+    opl.plot_label(subax, '(b)', fontsize='small', location=12, box=False, dist=0.01, fontweight='bold')
     
     
+    # This is because we assume the data is the first element and of course does not
+    # come with an STF
+    idx_shift = len(dss) - len(stfs)
+        
+    for _i, _stf in enumerate(stfs):
+        _stf.plot(normalize=stf_scale, lw=0.75, c=colors[_i + idx_shift])
+        
+    plt.xlim(0, 125)
+
+    # remove left,right and top spines from subax
+    subax.spines['top'].set_visible(False)
+    subax.spines['right'].set_visible(False)
+    subax.spines['left'].set_visible(False)
+
+    # offset bottom spine
+    subax.spines['bottom'].set_position(('outward', 2))
+
+    # Make tick labels small
+    subax.tick_params(which='both', axis='both', labelsize='small')
+    subax.tick_params(which='both', axis='y', labelleft=False, left=False)
+
+    beachax = opl.axes_from_axes(ax, 12342, [-0.2, 1.0, 0.2, 0.075])
+    beachax.axis('off')
+    plotb(
+            0.5,
+            0.5,
+            mt.tensor,
+            linewidth=0.25,
+            width=75,
+            facecolor='tab:red',
+            normalized_axes=True,
+            ax=beachax,
+            clip_on=False,
+            pdf=True
+        )
+    beachax.set_xlim(0,1)
+    beachax.set_ylim(0,1)
+    opl.plot_label(beachax, '(a)', fontsize='small', location=3, box=False, dist=0.01, fontweight='bold', zorder=10)
+    
+
+    plt.subplots_adjust(left=0.2, right=0.9, top=0.9, bottom=0.1)
+    fig.set_size_inches(8, 10)
+    fig.savefig(outfile)
+    plt.close(fig)
+    
+    
+def plot_sub_section(dss, labels, stfs, mt, scale=5.0, limits=[12.5*60,27.5*60], outfile='sub_section.pdf',
+                     start_idx=31, step_idx=5, end_idx=50, component='Z',
+                     stf_scale=1e23):
+        
+    
+    fig = plt.figure()
+
+    ax = plot_check_section(dss, labels=labels, component=component,
+                    scale=scale, start_idx=start_idx, step_idx=step_idx, end_idx=end_idx, limits=limits, plot_misfit_reduction=True,
+                    legendkwargs=dict(loc='center right', bbox_to_anchor=(1.0, 1.0), borderaxespad=0.0, 
+                                        columnspacing=1.0, fontsize='small'))
+    
+
+    colors = ['k', 'tab:red', 'tab:blue', 'tab:orange']
+    subax = opl.axes_from_axes(ax, 12341, [0.0, 1.0, 0.35, 0.125])
+    
+    opl.plot_label(subax, '(b)', fontsize='small', location=12, box=False, dist=0.01, fontweight='bold')
+    opl.plot_label(ax, '(c)', fontsize='small', location=12, box=False, dist=0.01, fontweight='bold', zorder=10)
+    
+    # This is because we assume the data is the first element and of course does not
+    # come with an STF
+    idx_shift = len(dss) - len(stfs)
+        
+    for _i, _stf in enumerate(stfs):
+        _stf.plot(normalize=stf_scale, lw=0.75, c=colors[_i + idx_shift])
+        
+    plt.xlim(0, 125)
+    # remove left,right and top spines from subax
+    subax.spines['top'].set_visible(False)
+    subax.spines['right'].set_visible(False)
+    subax.spines['left'].set_visible(False)
+
+    # offset bottom spine
+    subax.spines['bottom'].set_position(('outward', 2))
+
+    # Make tick labels small
+    subax.tick_params(which='both', axis='both', labelsize='small')
+    subax.tick_params(which='both', axis='y', labelleft=False, left=False)
+
+    beachax = opl.axes_from_axes(ax, 12342, [-0.2, 1.0, 0.2, 0.125])
+    beachax.axis('off')
+    plotb(
+            0.5,
+            0.5,
+            mt.tensor,
+            linewidth=0.25,
+            width=75,
+            facecolor='tab:red',
+            normalized_axes=True,
+            ax=beachax,
+            clip_on=False,
+            pdf=True
+        )
+    beachax.set_xlim(0,1)
+    beachax.set_ylim(0,1)
+    opl.plot_label(beachax, '(a)', fontsize='small', location=3, box=False, dist=0.01, fontweight='bold')
+
+    plt.subplots_adjust(left=0.2, right=0.9, top=0.85, bottom=0.175)
+    fig.set_size_inches(8, 3.5)
+    fig.savefig(outfile)
+    plt.close(fig)
+    
+    
+
+def plot_stf_comparison(stfs, labels, tmaxs, tmax_idx, costs, grad,  colors=['k', 'tab:red', 'tab:blue'],
+                        threshold=0.001, threshold_integrated=None, outfile="bstf_vs_scardec_stf_duration.pdf",
+                        limits=(0, 200)):
+
+    f, (a0, a1) = plt.subplots(2, 1, gridspec_kw={'height_ratios': [1.75, 1]}, figsize=(6, 4.5))
+
+    params = {
+        "text.usetex": False,
+        "mathtext.fontset": "cm",
+    }
+    plt.rcParams.update(params)
+    
+    # Limits endtime next multiple of 25
+    tmax = tmaxs[tmax_idx]
+    # limits = (0, np.ceil(tmax/50)*50)
+    
+    #STF plot
+    for _stf, _label, _color in zip(stfs, labels, colors):
+        # Compute the moment
+        I = np.trapz(_stf.f, _stf.t)/stfs[0].M0
+        _stf.plot(ax=a0, normalize=stfs[0].M0, lw=1.5, c=_color, label=f"I={I:.2f} " + _label)
+    a0.set_xlim(limits)
+    a0.set_xlabel('Time since origin [s]')
+    a0.legend(frameon=False, ncol=1, fontsize='small')
+    opl.plot_label(a0, '(a)', fontsize='small', location=6, box=False, dist=0.01, fontweight='bold')
+
+    # Max duration plot 
+    labelcost = r"$C^{\mathrm{corr}}$"
+    labelgrad = r"$G^{\mathrm{corr}}$"
+    markersize = 3
+    a1.plot(tmaxs, np.array(costs) / np.max(costs), "-ok", label=labelcost, markersize=markersize)
+    a1.plot(tmaxs, grad, "-o", c="tab:blue", label=labelgrad, markersize=markersize)
+
+    tmax = tmaxs[tmax_idx]
+    
+    a1.axvline(tmax, color="k", linestyle=":", zorder=-1)
+    
+    # plt.axhline(0.001, color="k", linestyle=":", zorder=-1)
+    
+    if threshold_integrated is not None:
+        a1.axvline(threshold_integrated, color="tab:red", linestyle=":", zorder=-1)
+         # Integral tmax
+        from scipy.integrate import cumtrapz
+        Ic = np.trapz(np.array(costs), tmaxs)
+        Ig = np.trapz(np.array(grad), tmaxs)
+        ic = cumtrapz(np.array(costs), tmaxs, initial=0)/Ic
+        ig = cumtrapz(np.array(grad), tmaxs, initial=0)/Ig
+        tmax_idx = np.where((ic > threshold_integrated) & (ig > threshold_integrated))[0][0]
+        a1.axvline(tmaxs[tmax_idx], color="k", linestyle=":", zorder=-1)
+    else:
+        a1.axhline(threshold, color="k", linestyle=":", zorder=-1)
+        
+    a1.text(
+        tmax + 1,
+        1.0,
+        f"Tmax={tmax:.0f}s ",
+        color="k",
+        horizontalalignment="right",
+        verticalalignment="top",
+        fontsize="small",
+    )
+
+    a1.text(
+        np.min(tmaxs),
+        0.001,
+        f"0.001",
+        color="k",
+        horizontalalignment="left",
+        verticalalignment="bottom",
+        fontsize="small",
+    )
+    a1.set_xlim(limits)
+    a1.legend(frameon=False, ncol=2)
+    a1.set_xlabel("Maximum Source Duration T [s]")
+    opl.plot_label(a1, '(b)', fontsize='small', location=6, box=False, dist=0.01, fontweight='bold')
+    plt.subplots_adjust(left=0.1, right=0.9, top=0.95, bottom=0.125, hspace=0.4)
+
+    plt.savefig(outfile)
+    plt.close(f)
     
     
 

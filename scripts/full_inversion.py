@@ -666,8 +666,8 @@ def find_tmax(t, tmaxs, d, G, config, parallel=True):
     
     def find_tmax_sub(tmax, t, d, G, config):
         config.update(dict(Tmax=tmax))
-        inv1 = Inversion(t, d, G, config=config)
-        x = gaussn(inv1.npknots[: -inv1.k - 1], 30, 20)
+        inv1 = osl.Inversion(t, d, G, config=config)
+        x = osl.utils.gaussn(inv1.npknots[: -inv1.k - 1], 30, 20)
         x = 2*x / np.sum(x)
         inv1.optimize_smooth_bound0N(x=x)
         return inv1.cost
