@@ -19,3 +19,7 @@ scripts/*.pkl
 *.pdf
 *.png
 scripts/STF
+*.e.txt
+*.o.txt
+scripts/STF*
+scripts/logs*
