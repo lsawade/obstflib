@@ -3,6 +3,7 @@ import numpy as np
 import obsnumpy as onp
 import obsplotlib.plot as opl
 import matplotlib.pyplot as plt
+from . import utils
 
 def plot_check(ds1: onp.Dataset, ds2: onp.Dataset, label1='Direct', label2='Obspy',
                network = 'II', station = 'BFO', component = 'Z',
@@ -109,8 +110,8 @@ def plot_check_section(dss, labels=['Observed','Synthetic'],
         y = scale * ds.data[pos, ic, :].T + x
         
         # Get data range
-        _minY, _maxY = np.min(y), np.max(y)
-        
+        _minY, _maxY = np.nanmin(y), np.nanmax(y)
+
         # Update min/max
         minY = np.minimum(_minY, minY)
         maxY = np.maximum(_maxY, maxY)
@@ -328,7 +329,7 @@ def plot_full_section(dss, labels, stfs, mt, stf_scale=1e23, scale=5.0, limits=[
     
     
 def plot_sub_section(dss, labels, stfs, mt, scale=5.0, limits=[12.5*60,27.5*60], outfile='sub_section.pdf',
-                     start_idx=31, step_idx=5, end_idx=50, component='Z',
+                     start_idx=20, step_idx=6, end_idx=55, component='Z',
                      stf_scale=1e23):
         
     
@@ -391,11 +392,11 @@ def plot_sub_section(dss, labels, stfs, mt, scale=5.0, limits=[12.5*60,27.5*60],
     
     
 
-def plot_stf_comparison(stfs, labels, tmaxs, tmax_idx, costs, grad,  colors=['k', 'tab:red', 'tab:blue'],
-                        threshold=0.001, threshold_integrated=None, outfile="bstf_vs_scardec_stf_duration.pdf",
-                        limits=(0, 200)):
+def plot_stf_comparison(stfs, labels, tmaxs, tmax_idx, costs, knots_per_second, Ns, colors=['k', 'tab:red', 'tab:blue'],
+                        outfile="bstf_vs_scardec_stf_duration.pdf",
+                        limits=(0, 300)):
 
-    f, (a0, a1) = plt.subplots(2, 1, gridspec_kw={'height_ratios': [1.75, 1]}, figsize=(6, 4.5))
+    f, (a0, a1) = plt.subplots(2, 1, gridspec_kw={'height_ratios': [1.75, 1]}, figsize=(6, 3.5))
 
     params = {
         "text.usetex": False,
@@ -419,10 +420,15 @@ def plot_stf_comparison(stfs, labels, tmaxs, tmax_idx, costs, grad,  colors=['k'
 
     # Max duration plot 
     labelcost = r"$C^{\mathrm{corr}}$"
-    labelgrad = r"$G^{\mathrm{corr}}$"
     markersize = 3
+    k = tmaxs * knots_per_second + 1
+    aic = utils.norm_AIC(np.array(costs), Ns, k)
     a1.plot(tmaxs, np.array(costs) / np.max(costs), "-ok", label=labelcost, markersize=markersize)
-    a1.plot(tmaxs, grad, "-o", c="tab:blue", label=labelgrad, markersize=markersize)
+    a1.plot(tmaxs, aic, "-o", label="Norm. AIC", markersize=markersize*0.66, linewidth=0.5, c='tab:red')
+    minAIC = np.argmin(aic)
+    a1.plot(tmaxs[minAIC], costs[minAIC], "o", c="w", markersize=markersize*2.0, label="Min. AIC", zorder=-10, 
+            markeredgecolor='k', markeredgewidth=1.0)
+    # a1.plot(tmaxs, grad, "-o", c="tab:blue", label=labelgrad, markersize=markersize)
 
     tmax = tmaxs[tmax_idx]
     
@@ -430,18 +436,18 @@ def plot_stf_comparison(stfs, labels, tmaxs, tmax_idx, costs, grad,  colors=['k'
     
     # plt.axhline(0.001, color="k", linestyle=":", zorder=-1)
     
-    if threshold_integrated is not None:
-        a1.axvline(threshold_integrated, color="tab:red", linestyle=":", zorder=-1)
-         # Integral tmax
-        from scipy.integrate import cumtrapz
-        Ic = np.trapz(np.array(costs), tmaxs)
-        Ig = np.trapz(np.array(grad), tmaxs)
-        ic = cumtrapz(np.array(costs), tmaxs, initial=0)/Ic
-        ig = cumtrapz(np.array(grad), tmaxs, initial=0)/Ig
-        tmax_idx = np.where((ic > threshold_integrated) & (ig > threshold_integrated))[0][0]
-        a1.axvline(tmaxs[tmax_idx], color="k", linestyle=":", zorder=-1)
-    else:
-        a1.axhline(threshold, color="k", linestyle=":", zorder=-1)
+    # if threshold_integrated is not None:
+    #     a1.axvline(threshold_integrated, color="tab:red", linestyle=":", zorder=-1)
+    #      # Integral tmax
+    #     from scipy.integrate import cumtrapz
+    #     Ic = np.trapz(np.array(costs), tmaxs)
+    #     Ig = np.trapz(np.array(grad), tmaxs)
+    #     ic = cumtrapz(np.array(costs), tmaxs, initial=0)/Ic
+    #     ig = cumtrapz(np.array(grad), tmaxs, initial=0)/Ig
+    #     tmax_idx = np.where((ic > threshold_integrated) & (ig > threshold_integrated))[0][0]
+    #     a1.axvline(tmaxs[tmax_idx], color="k", linestyle=":", zorder=-1)
+    # else:
+    #     a1.axhline(threshold, color="k", linestyle=":", zorder=-1)
         
     a1.text(
         tmax + 1,
@@ -453,17 +459,8 @@ def plot_stf_comparison(stfs, labels, tmaxs, tmax_idx, costs, grad,  colors=['k'
         fontsize="small",
     )
 
-    a1.text(
-        np.min(tmaxs),
-        0.001,
-        f"0.001",
-        color="k",
-        horizontalalignment="left",
-        verticalalignment="bottom",
-        fontsize="small",
-    )
     a1.set_xlim(limits)
-    a1.legend(frameon=False, ncol=2)
+    a1.legend(frameon=False, ncol=1, fontsize='small')
     a1.set_xlabel("Maximum Source Duration T [s]")
     opl.plot_label(a1, '(b)', fontsize='small', location=6, box=False, dist=0.01, fontweight='bold')
     plt.subplots_adjust(left=0.1, right=0.9, top=0.95, bottom=0.125, hspace=0.4)

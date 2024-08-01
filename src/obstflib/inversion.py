@@ -26,7 +26,7 @@ class Inversion(object):
     bound_weight = 1.0
     verbose: bool = False
 
-    def __init__(self, t, data, G, config=None):
+    def __init__(self, t, data, G, tapers=None, config=None):
 
         # Data/synthetic inputs
         self.t = t
@@ -39,6 +39,14 @@ class Inversion(object):
         self.ntfft = next_power_of_2(self.nt)
         self.dt = t[1] - t[0]
         self.dataN = np.sum(self.data**2, axis=1) * self.dt
+        
+        # For speedup, we use separate forward functions for either tapered or non-tapered
+        # inversion
+        if tapers is not None:
+            self.tapers = tapers
+            self.forward = self.__forward_tapered__
+        else:
+            self.forward = self.__forward__
 
         # Fourier transform of the Green's function
         self.FG = fft(G, n=self.ntfft, axis=-1)
@@ -120,13 +128,24 @@ class Inversion(object):
         self.I_Bsplines = np.array(self.I_Bsplines)
         self.GBsplines = np.array(self.GBsplines)
 
-    def forward(self, c):
+    def __forward__(self, c):
         # Convolve spike with the Bspline
         f = self.construct_f(c)
-        return (
+        
+        return  (
             np.real(ifft(self.FG * fft(f, n=self.ntfft)[None, :])[:, : self.nt])
             * self.dt
         )
+        
+    def __forward_tapered__(self, c):
+        # Convolve spike with the Bspline
+        f = self.construct_f(c)
+        
+        return  (
+            np.real(ifft(self.FG * fft(f, n=self.ntfft)[None, :])[:, : self.nt])
+            * self.dt
+        ) * self.tapers
+
 
     def loss(self, c):
         return 0.5 * np.sum((self.forward(c) - self.data) ** 2) * self.dt / self.N

@@ -5,7 +5,7 @@ import glob
 import numpy as np
 import matplotlib.pyplot as plt
 
-cgm = glob.glob("/autofs/nccs-svm1_home1/lsawade/gcmt/obstflib/scripts/STF/*/costs_grads_main.npz")
+cgm = glob.glob("/autofs/nccs-svm1_home1/lsawade/gcmt/obstflib/scripts/STF_results/*/body/Z/costs_grads_main.npz")
 stfdirs = [os.path.dirname(c) for c in cgm]
 
 # %%
@@ -30,10 +30,12 @@ for _i, (_c, _g )in enumerate(zip(costs, grads)):
         plt.plot(x, _c, 'ko', markersize=markersize)
         plt.plot(x, _g, '-o', c='tab:red', markersize=markersize)    
         
-    plt.ylim(0.0, 0.1)
+    plt.ylim(0.0, 0.5)
+
+    
     plt.xlabel("Maximum source Duration T [s]")
     plt.savefig("cost_grads.pdf")
-    
+    plt.close('all')
     durfile = os.path.join(stfdirs[_i], "duration.npy")
     
     dur = ''
@@ -51,6 +53,24 @@ for _i, (_c, _g )in enumerate(zip(costs, grads)):
         dur = int(dur)
         np.save(durfile, dur)
         durations.append(dur)
+    
+    
+# %%
+plt.figure()
+Ns = [1000, 3600, 7200]
+c = ['tab:blue', 'tab:orange', 'tab:green']
+x = np.arange(N)*5 + 5
+for j in range(len(Ns)):
+    for i in range(len(costs)):
+        aic = (Ns[j] * np.log(costs[i]+1) + 2 * x)
+        # normalize aic
+        aic = aic - np.min(aic)
+        aic = aic / np.max(aic)
+        idx = np.argmin(aic)
+        plt.plot(x, aic+i, 'k-', markersize=markersize)
+        plt.plot(x[idx], aic[idx]+i, 'o', markersize=markersize, c = c[j])
+        plt.plot
+plt.savefig("CG_analysis.pdf")
     
 
 # %%
@@ -201,6 +221,10 @@ while i < Nstf:
         i += 1
     
     
+    
+# %%
+# AIC
+
 
 
 # %%

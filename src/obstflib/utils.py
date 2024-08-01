@@ -383,7 +383,7 @@ def find_elbow_point(k, curve):
     return idxOfBestPoint
 
 
-def find_Tmax(tmaxs, costs, grads, Npad=150):
+def find_Tmax(tmaxs, costs, grads, Npad=150, cost_only=False):
     """Finds the elbow point of an L-Curve for the source time function problem.
     We are padding the L-curve to ensure that the elbow point on the lower side of the elbow."""
     
@@ -399,6 +399,40 @@ def find_Tmax(tmaxs, costs, grads, Npad=150):
     ig = find_elbow_point(_tmax, _grad) + 1
     
     # Choose the maximum of the grad and cost elbow
-    imax = np.max([ic, ig])
+    if cost_only:
+        imax = ic
+    else:
+        imax = np.max([ic, ig])
     
     return imax
+
+def norm_AIC(costs, Ns, k):
+    """Compute the normalized AIC for a given cost, number of samples and number of model parameters."""
+    
+    # Number of model parameters k
+    # k = tmaxs * knots_per_second + 1
+    
+    # AIC + 1 too avoid log(0)
+    aic = (Ns * np.log(costs+1) + 2 * k)
+    
+    # normalize aic (Not technically necessary, remnant from plot various AIC lines)
+    aic = aic - np.min(aic)
+    aic = aic / np.max(aic)
+    
+    return aic
+
+def find_Tmax_AIC(tmaxs, costs, grads, knots_per_second, Ns):
+    """Find tmax using the akaike information criterion. Note that this is "inverted" in
+    the sense that we are trying to minimize the AIC and not maximize it as in the original
+    likelihood version. See Kintner et al. 2024 """
+    
+    # Number of model parameters k
+    k = tmaxs * knots_per_second + 1
+    
+    # Compute normalized AIC
+    aic = norm_AIC(costs, Ns, k)
+    
+    # Get the index of the minimum aic
+    idx = np.argmin(aic)
+    
+    return idx
