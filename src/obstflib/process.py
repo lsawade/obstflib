@@ -10,7 +10,7 @@ def process_ds(ds: onp.Dataset, starttime, length_in_s, sps, step=False):
     ds.taper(max_percentage=0.05, type='cosine')
 
     # Bandpass the seismograms
-    ds.filter('bandpass', freqmin=0.004, freqmax=1/17.0, corners=3, zerophase=True)
+    ds.filter('bandpass', freqmin=0.005, freqmax=1/17.0, corners=3, zerophase=True)
 
     # Resample the seismograms
     ds.interpolate(sampling_rate=sps, starttime=starttime, npts=int((length_in_s) * sps),

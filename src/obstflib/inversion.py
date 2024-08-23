@@ -1,4 +1,5 @@
-
+from copy import deepcopy
+import typing as tp
 import numpy as np
 from numpy.fft import fft, ifft
 import matplotlib.pyplot as plt
@@ -24,6 +25,7 @@ class Inversion(object):
     penalty_weight = 1.0
     smooth_weight = 1.0
     bound_weight = 1.0
+    diff_weight = 1.0
     verbose: bool = False
 
     def __init__(self, t, data, G, tapers=None, config=None):
@@ -55,7 +57,7 @@ class Inversion(object):
         if config is not None:
             for key in config:
                 setattr(self, key, config[key])
-
+ 
         # Construct the spline
         self.construct_spline()
 
@@ -105,7 +107,7 @@ class Inversion(object):
             # Compute the base spline
             b = self.bspl.basis_element(self.npknots[i : i + 5], extrapolate=False)
 
-            # Set areas of extrappolation to zero
+            # Set areas of extrapolation to zero
             b = b(self.t)
             b = np.where(np.isnan(b), 0, b)
 
@@ -269,6 +271,14 @@ class Inversion(object):
         grad = np.zeros_like(c)
         grad[-1] = 2 * c[-1]
         return grad
+    
+    def cost_diff(self, c):
+        """For optimization without changing a base set of model parameters too much."""
+        return 0.5 * np.sum((c**2 - self.base_c**2)**2)/len(c)
+    
+    def gradient_diff(self, c):
+        """For optimization without changing a base set of model parameters too much."""
+        return 2 * c * (c**2 - self.base_c**2)/len(c)
 
     def loss_int(self, c):
         return self.weight * self.loss_norm(
@@ -279,7 +289,8 @@ class Inversion(object):
         return self.weight * self.gradient_norm(
             c
         ) + self.penalty_weight * self.gradient_integral_penalty(c)
-
+        
+    
     def loss_int_smooth1(self, c):
         C1 = self.loss_norm(c)
         C2 = self.loss_integral_penalty(c)
@@ -338,7 +349,34 @@ class Inversion(object):
             + self.smooth_weight * self.gradient_smoothness_first_order(c)
             + self.bound_weight * (self.gradient_bound0(c) + self.gradient_boundN(c))
         )
-
+        
+    def loss_int_smooth1_bound0N_diff(self, c):
+        C1 = self.loss_norm(c)
+        C2 = self.loss_integral_penalty(c)
+        C3 = self.cost_smoothness_first_order(c)
+        C4 = self.cost_bound0(c)
+        C5 = self.cost_boundN(c)
+        C6 = self.cost_diff(c)
+        if self.verbose:
+            print(f"C1={C1:g}, C2={C2:g}, C3={C3:g}, C4={C4:g}, C5={C5:g}, C6={C6:g}")
+        return (
+            self.weight * C1
+            + self.penalty_weight * C2
+            + self.smooth_weight * C3
+            + self.bound_weight * (C4 + C5)
+            + self.diff_weight * C6
+        )
+    
+    def grad_int_smooth1_bound0N_diff(self, c):
+        
+        return (
+            self.weight * self.gradient_norm(c)
+            + self.penalty_weight * self.gradient_integral_penalty(c)
+            + self.smooth_weight * self.gradient_smoothness_first_order(c)
+            + self.bound_weight * (self.gradient_bound0(c) + self.gradient_boundN(c))
+            + self.diff_weight * self.gradient_diff(c)
+        )
+        
     def optimize(self, x=None):
 
         if x is None:
@@ -471,6 +509,29 @@ class Inversion(object):
         self.model = opt.x
         self.cost = opt.fun
         self.opt = opt
+        
+    def optimize_smooth_bound_diff(self, x=None, x0=None):
+
+        if x is None:
+            x = 0.25 * np.ones(len(self.npknots) - self.k - 1)
+            x = gaussn(self.npknots[: -self.k - 1], 30, 20)
+            x = x / np.sum(x)
+
+        self.init_model = x
+        self.base_c = x0
+        
+        opt = so.minimize(
+            self.loss_int_smooth1_bound0N_diff,
+            x,
+            jac=self.grad_int_smooth1_bound0N_diff,
+            method="BFGS",
+            options={"maxiter": self.maxiter},
+            # bounds=[(0, 1)] * len(x),
+        )
+
+        self.model = opt.x
+        self.cost = opt.fun
+        self.opt = opt
 
     
     def print_results(self, title="Smooth+bound0"):
@@ -518,8 +579,111 @@ class Inversion(object):
         return fig, [ax1, ax2, ax3]
 
 
+class CombinedInversion(object):
+    
+    invs: tp.List[Inversion]
+    weights: tp.List[float]
+    
+    def __init__(self, invs: tp.List[Inversion], weights: tp.List[float]):
+            
+        self.invs = invs
+        self.weights = weights
+        self.maxiter = invs[0].maxiter
+        self.construct_f = invs[0].construct_f
+        self.t = invs[0].t
+        self.knots = invs[0].knots
+        self.k = invs[0].k
+        
+        for inv in invs:
+            assert len(inv.t) == len(self.t)
+            assert len(inv.knots) == len(self.knots)
+            assert inv.k == self.k
+            assert np.allclose(inv.knots, self.knots)
+        
+        
+    def loss(self, c):
+        return sum([w * inv.loss_int_smooth1_bound0N(c) for inv, w in zip(self.invs, self.weights)])
+    
+    def gradient(self, c):
+        return sum([w * inv.grad_int_smooth1_bound0N(c) for inv, w in zip(self.invs, self.weights)])
+    
+    def loss_diff(self, c):
+        return sum([w * inv.loss_int_smooth1_bound0N_diff(c) for inv, w in zip(self.invs, self.weights)])
+    
+    def gradient_diff(self, c):
+        return sum([w * inv.grad_int_smooth1_bound0N_diff(c) for inv, w in zip(self.invs, self.weights)])
 
+    def optimize(self, x=None):
+        
+        if x is None:
+            x = 0.25 * np.ones(len(self.npknots) - self.k - 1)
+            x = gaussn(self.npknots[: -self.k - 1], 30, 20)
+            x = x / np.sum(x)
 
+        self.init_model = x
+
+        opt = so.minimize(
+            self.loss,
+            x,
+            jac=self.gradient,
+            method="BFGS",
+            options={"maxiter": self.maxiter},
+            # bounds=[(0, 1)] * len(x),
+        )
+
+        self.model = opt.x
+        self.cost = opt.fun
+        self.opt = opt  
+        
+    def optimize_diff(self, x=None, x0=None):
+        
+        if x is None:
+            x = 0.25 * np.ones(len(self.npknots) - self.k - 1)
+            x = gaussn(self.npknots[: -self.k - 1], 30, 20)
+            x = x / np.sum(x)
+            
+        self.init_model = x
+        self.base_c = x0
+        for inv in self.invs:
+            inv.base_c = x0
+        
+        opt = so.minimize(
+            self.loss_diff,
+            x,
+            jac=self.gradient_diff,
+            method="BFGS",
+            options={"maxiter": self.maxiter},
+            # bounds=[(0, 1)] * len(x),
+        )
+        
+        self.model = opt.x
+        self.cost = opt.fun
+        self.opt = opt
+        
+        
+    
+    def print_results(self, title="Smooth+bound0"):
+        print(f"{title}:")
+        print("I_i = ", np.trapz(self.construct_f(self.init_model), self.t))
+        print("I_f = ", np.trapz(self.construct_f(self.model), self.t))
+        print("COST", self.cost)
+        print("N_knots", len(self.knots))
+        print("STATUS", self.opt.success, ":", self.opt.message)
+        print("Niter", self.opt.nit)
+
+    
+    def print_results(self, title="Smooth+bound0"):
+        print(f"{title}:")
+        print("I_i = ", np.trapz(self.construct_f(self.init_model), self.t))
+        print("I_f = ", np.trapz(self.construct_f(self.model), self.t))
+        print("COST", self.cost)
+        print("N_knots", len(self.knots))
+        print("STATUS", self.opt.success, ":", self.opt.message)
+        print("Niter", self.opt.nit)
+    
+        
+        
+        
 def construct_taper(npts, taper_type="tukey", alpha=0.2):
     """
     Construct taper based on npts

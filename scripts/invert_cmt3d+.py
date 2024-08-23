@@ -277,7 +277,8 @@ for _phase in phases:
 # and not the whole trace.
 log("Selecting windows")
 # Subselect the seignals based on distance phases etc.
-ds_gree_tt = onp.tt.select_traveltime_subset(ds_gree, component=component, phase=phase, maxdist=145.0)
+ds_gree_tt = onp.tt.select_traveltime_subset(ds_gree, component=component, 
+                                             phase=phase, maxdist=145.0)
 
 # Get the corresponding observed traces
 ds_gree_tt, ds_obsd_tt = ds_gree_tt.intersection(ds_obsd)
@@ -579,13 +580,13 @@ from matplotlib.gridspec import GridSpec
 log("Plotting station-wise STFs")
 
 fig = plt.figure(figsize=(6, 7))
-gs = GridSpec(2,2, height_ratios=[1, 1], hspace=0.1, wspace=0.1, figure=fig)
+gs = GridSpec(2,2, height_ratios=[1, 1], hspace=0.75, wspace=0.4, figure=fig)
 ax1 = fig.add_subplot(gs[0, 0])
 ax1.plot(bstf.t, bstf.f/bstf.M0, 'k', label='Optimal', zorder=2)
 ax1.plot(fstfs.t, avg_stf, label='Mean', zorder=1, c='gray')
 ax1.fill_between(fstfs.t, np.maximum(0, avg_stf-std_stf), avg_stf+std_stf, alpha=0.5, zorder=-1, label='Std', color='gray')
 ax1.plot(scardec.t, scardec.f/bstf.M0, label='Scardec', zorder=0, c='tab:red')
-ax1.legend(frameon=False, loc='lower center', bbox_to_anchor=(0.5, 1.0), ncol=4, fontsize='small')
+ax1.legend(frameon=False, loc='lower center', bbox_to_anchor=(0.5, 1.0), ncol=2, fontsize='small')
 ax1.set_xlim(0,np.max(newtmaxs))
 opl.plot_label(ax1, '(a)', location=2, box=False, dist=0.0)
 
@@ -595,9 +596,9 @@ ax1.spines['right'].set_visible(False)
 ax1.tick_params(axis='x', which='both', labelbottom=False)
 
 
-ax2 = fig.add_subplot(gs[1, 0], sharex=ax1)
+ax2 = fig.add_subplot(gs[:, 1], sharex=ax1)
 plt.sca(ax2)
-osl.plot.plot_check_section([fstfs], ['STF'], scale=50.0, limits=[0,125], fill=True, 
+osl.plot.plot_check_section([fstfs], ['STF'], scale=25.0, limits=[0,125], fill=True, 
                             fillkwargs=dict(alpha=0.75, color='gray', linewidth=0.0), 
                             step_idx=1, colors=['w'], azi=True, plot_real_distance=True, 
                             lw=0.25, remove_spines=False, component=component)
@@ -620,14 +621,14 @@ opl.plot_label(ax2, '(b)', location=2, box=False, dist=0.0)
 
 # Set ylabel
 ax2.set_ylabel('Azimuth [$^\circ$]')
-ax2.set_xlabel('')
+ax2.set_xlabel('Time since origin [s]')
 plt.xlim(0,np.max(newtmaxs))
-plt.ylim(0, 430)
+plt.ylim(0, 385)
 yticks = np.arange(0, 400, 60)
 plt.yticks(yticks, [f'{int(_y):d}' for _y in yticks])
 
 
-ax3 = fig.add_subplot(gs[:, 1])
+ax3 = fig.add_subplot(gs[1, 0])
 markersize = 3
 labelcost = r"$C^{\mathrm{corr}}_{\mathrm{avg}}$"
 labelcost_opt = r"$C^{\mathrm{corr}}_{\mathrm{opt}}$"
@@ -660,7 +661,7 @@ ax3.axhline(0, c='k', ls=':', lw=.75)
 ax3.axhline(1, c='k', ls=':', lw=.75)
 
 opl.plot_label(ax3, '(c)', location=2, box=dict(edgecolor='None', facecolor='w'), dist=0.0)
-ax3.legend(frameon=False, ncol=4, fontsize='small', loc='lower center', bbox_to_anchor=(0.5, 1.0))
+ax3.legend(frameon=False, ncol=2, fontsize='small', loc='lower center', bbox_to_anchor=(0.5, 1.0))
 ax3.set_xlim(0,np.max(newtmaxs))
 ax3.set_ylim(-0.05,1.05)
 

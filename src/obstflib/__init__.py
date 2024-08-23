@@ -1,11 +1,11 @@
 from .dataclasses import STF, CMTSOLUTION
 from . import utils
-from .inversion import Inversion, LagrangeInversion
+from .inversion import Inversion, CombinedInversion, LagrangeInversion
 from .process import process_ds as process
 from . import plot
 from . import utils
 
 __all__ = ["STF", "CMTSOLUTION", "utils", "plot",
-           "Inversion", "LagrangeInversion", 
+           "Inversion", "CombinedInversion", "LagrangeInversion", 
            "process",
            ]

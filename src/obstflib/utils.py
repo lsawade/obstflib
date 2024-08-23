@@ -1,4 +1,5 @@
 import typing as tp
+import datetime
 from copy import deepcopy
 import numpy as np
 from scipy import special
@@ -7,8 +8,19 @@ from obspy.geodetics import gps2dist_azimuth
 import obsplotlib.plot as opl
 import matplotlib.pyplot as plt
 import obsnumpy as onp
+import scipy as sp
 
 
+def log(msg):
+    length = 80
+    length_msg = len(msg)
+    length_right = (length - length_msg) - 1
+    if length_right < 0:
+        fill = ""
+    else:
+        fill = "-" * length_right
+    print(f'[{datetime.datetime.now()}] {msg} {fill}', flush=True)
+    
 def triangle_stf(t: np.ndarray, t0: float, hdur: float):
     """
     x = 0, where t < t0 - hdur,
@@ -342,7 +354,35 @@ def reindex_dict(meta, idx, N_original=None, debug=False):
     return outmeta
 
 
+def exp_model_func(t, A, B):
+    return -np.exp(-A * (t - B)) + 1.0
 
+
+def fit_exp_nonlinear(t, y, p0=None):
+    
+    # Define cost function
+    fun = lambda x : np.sum((exp_model_func(t, x[0], x[1]) - y)**2)
+    
+    params = sp.optimize.minimize(fun, x0=p0, method='Nelder-Mead',
+                                        options=dict(maxiter=1000)).x
+    A, B = params
+    return A, B
+
+def log_model_func(t, A, B):
+    return -1.0 / (1.0 + np.exp(A * (t - B))) + 1.0
+
+
+def fit_logistic(t, y, p0=None):
+    
+    # Define cost function
+    fun = lambda x : np.sum((log_model_func(t, x[0], x[1]) - y)**2)
+    
+    # optimize
+    params = sp.optimize.minimize(fun, x0=p0, method='Nelder-Mead',
+                                  options=dict(maxiter=1000)).x
+    A, B = params
+
+    return A, B
 
 def find_elbow_point(k, curve):
     """Finds the elbow point of an L-Curve."""
@@ -382,6 +422,48 @@ def find_elbow_point(k, curve):
     
     return idxOfBestPoint
 
+def find_cond_elbow_idx(t, STF, A_exp_thresh=0.0175, B_exp_thresh=5.0, 
+                        A_log_thresh=0.035, B_log_thresh=50.0, extra_long=False):
+    """input is cumulative STF"""
+    # Fit decay rate of the STF
+    long_stf = False
+    
+    A_exp, B_exp = fit_exp_nonlinear(t, STF, p0=[0.04, 5.00])
+    
+    # Return the relevant function        
+    func_exp = exp_model_func
+    
+    # Fit the cumulative STF to logistic decay
+    A_log, B_log = fit_logistic(t, STF, p0=[0.04, 5.0])
+
+    # Return the relevant function
+    func_log = log_model_func
+    
+    # Check if the STF is long
+    print("Coefficients", A_exp, B_exp, A_log, B_log)
+    
+    if ((B_exp >= B_exp_thresh and A_exp <= A_exp_thresh) and 
+            (A_log <= A_log_thresh and B_log >= B_log_thresh)):
+        _t = t[np.argmin(np.abs(STF - 0.95))]
+        if extra_long:
+            idx = np.argmin(np.abs(t - 3.*_t))
+        else:
+            idx = np.argmin(np.abs(t -2.*_t))
+        long_stf = True
+    else:
+        idx = np.argmin(np.abs(STF - 0.95))
+        long_stf = False
+    
+    return idx, (func_exp, A_exp, B_exp), (func_log, A_log, B_log), long_stf
+
+def find_tmax(t, STF, **kwargs):
+    dt = t[1] - t[0]
+    _idx, _, _, long_stf = find_cond_elbow_idx(t, STF, **kwargs)
+    idx = find_elbow_point(t[:_idx], STF[:_idx]) 
+    idx += 10/dt
+    idx = int(idx)
+    tmax = t[idx]
+    return tmax, long_stf
 
 def find_Tmax(tmaxs, costs, grads, Npad=150, cost_only=False):
     """Finds the elbow point of an L-Curve for the source time function problem.
@@ -406,14 +488,14 @@ def find_Tmax(tmaxs, costs, grads, Npad=150, cost_only=False):
     
     return imax
 
-def norm_AIC(costs, Ns, k):
+def norm_AIC(costs, Ns, k, coeff=1.0):
     """Compute the normalized AIC for a given cost, number of samples and number of model parameters."""
     
     # Number of model parameters k
     # k = tmaxs * knots_per_second + 1
     
     # AIC + 1 too avoid log(0)
-    aic = (Ns * np.log(costs+1) + 2 * k)
+    aic = (coeff * Ns * np.log(costs+1) + 2 * k)
     
     # normalize aic (Not technically necessary, remnant from plot various AIC lines)
     aic = aic - np.min(aic)
@@ -421,7 +503,7 @@ def norm_AIC(costs, Ns, k):
     
     return aic
 
-def find_Tmax_AIC(tmaxs, costs, grads, knots_per_second, Ns):
+def find_Tmax_AIC(tmaxs, costs, grads, knots_per_second, Ns, coeff=1.0):
     """Find tmax using the akaike information criterion. Note that this is "inverted" in
     the sense that we are trying to minimize the AIC and not maximize it as in the original
     likelihood version. See Kintner et al. 2024 """
@@ -430,9 +512,33 @@ def find_Tmax_AIC(tmaxs, costs, grads, knots_per_second, Ns):
     k = tmaxs * knots_per_second + 1
     
     # Compute normalized AIC
-    aic = norm_AIC(costs, Ns, k)
+    aic = norm_AIC(costs, Ns, k, coeff=coeff)
     
     # Get the index of the minimum aic
     idx = np.argmin(aic)
     
     return idx
+
+
+def timeshift(s: np.ndarray, dt: float, shift: float) -> np.ndarray:
+    """ shift a signal by a given time-shift in the frequency domain
+    Parameters
+    ----------
+    s : Arraylike
+        signal
+    N2 : int
+        length of the signal in f-domain (usually equals the next pof 2)
+    dt : float
+        sampling interval
+    shift : float
+        the time shift in seconds
+    Returns
+    -------
+    Timeshifted signal"""
+
+    S = np.fft.fft(s, axis=-1)
+
+    # Omega
+    phshift = np.exp(-1.0j*shift*np.fft.fftfreq(s.shape[-1], dt)*2*np.pi)
+    s_out = np.real(np.fft.ifft(phshift[None, :] * S, axis=-1))
+    return s_out
