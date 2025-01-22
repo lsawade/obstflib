@@ -423,7 +423,7 @@ def find_elbow_point(k, curve):
     return idxOfBestPoint
 
 def find_cond_elbow_idx(t, STF, A_exp_thresh=0.0175, B_exp_thresh=5.0, 
-                        A_log_thresh=0.035, B_log_thresh=50.0, extra_long=False):
+                        A_log_thresh=0.0312, B_log_thresh=50.0, extra_long=False):
     """input is cumulative STF"""
     # Fit decay rate of the STF
     long_stf = False
@@ -450,6 +450,33 @@ def find_cond_elbow_idx(t, STF, A_exp_thresh=0.0175, B_exp_thresh=5.0,
         else:
             idx = np.argmin(np.abs(t -2.*_t))
         long_stf = True
+        
+    elif ((A_exp <= A_exp_thresh and B_exp >= 10.0 ) and 
+            (A_log <= 0.0375 and B_log >= 65.)):
+        _t = t[np.argmin(np.abs(STF - 0.95))]
+        idx = np.argmin(np.abs(t -2.*_t))
+        long_stf = True
+        
+    elif ((A_exp <= 0.02 and B_exp >= 10.0) and 
+            (A_log <= 0.0655 and B_log >= 55.)):
+        _t = t[np.argmin(np.abs(STF - 0.95))]
+        idx = np.argmin(np.abs(t -2.*_t))
+        long_stf = True
+        
+    # Even longer STF
+    elif ((A_exp <= A_exp_thresh and B_exp >= 10.0) and 
+            (A_log <= 0.035 and B_log >= 65)):
+        _t = t[np.argmin(np.abs(STF - 0.95))]
+        idx = np.argmin(np.abs(t - 2.5*_t))
+        long_stf = True
+    
+    # Even longer STF
+    elif ((A_exp <= 0.0195 and B_exp >= 5.0) and 
+            (A_log <= 0.0410 and B_log >= 49)):
+        _t = t[np.argmin(np.abs(STF - 0.95))]
+        idx = np.argmin(np.abs(t - 2.5*_t))
+        long_stf = True
+        
     else:
         idx = np.argmin(np.abs(STF - 0.95))
         long_stf = False
@@ -457,13 +484,45 @@ def find_cond_elbow_idx(t, STF, A_exp_thresh=0.0175, B_exp_thresh=5.0,
     return idx, (func_exp, A_exp, B_exp), (func_log, A_log, B_log), long_stf
 
 def find_tmax(t, STF, **kwargs):
+    
+    # Compute the sampling interval
     dt = t[1] - t[0]
+    
+    # Find the elbow point
     _idx, _, _, long_stf = find_cond_elbow_idx(t, STF, **kwargs)
+    
+    # Find elbow point using the cumulative STF
     idx = find_elbow_point(t[:_idx], STF[:_idx]) 
-    idx += 10/dt
+    
+    # Add the length of the STF divided by 10 as a buffer
+    idx += t[idx]/10/dt
     idx = int(idx)
+    
+    # Get the final time
     tmax = t[idx]
+    
     return tmax, long_stf
+
+
+def compute_azimuthal_weights(az, weights=None, nbins=12, p=1):
+    
+    # Create the bins
+    bins = np.arange(0, 360.1, 360/nbins)
+
+    # Histogram
+    H, _ = np.histogram(az, bins=bins, weights=weights)
+
+    # Find which az is in which bin
+    binass = np.digitize(az, bins) - 1
+
+    # Compute weights
+    w = (1/H[binass])**p
+
+    # Normalize
+    w /= np.mean(w)
+
+    return w
+
 
 def find_Tmax(tmaxs, costs, grads, Npad=150, cost_only=False):
     """Finds the elbow point of an L-Curve for the source time function problem.
@@ -542,3 +601,51 @@ def timeshift(s: np.ndarray, dt: float, shift: float) -> np.ndarray:
     phshift = np.exp(-1.0j*shift*np.fft.fftfreq(s.shape[-1], dt)*2*np.pi)
     s_out = np.real(np.fft.ifft(phshift[None, :] * S, axis=-1))
     return s_out
+
+
+def reckon(lat, lon, distance, bearing):
+    """ Computes new latitude and longitude from bearing and distance.
+
+    Parameters
+    ----------
+    lat: in degrees
+    lon: in degrees
+    bearing: in degrees
+    distance: in degrees
+
+    Returns
+    -------
+    lat, lon
+
+
+    lat1 = math.radians(52.20472)  # Current lat point converted to radians
+    lon1 = math.radians(0.14056)  # Current long point converted to radians
+    bearing = np.pi/2 # 90 degrees
+    # lat2  52.20444 - the lat result I'm hoping for
+    # lon2  0.36056 - the long result I'm hoping for.
+
+    """
+
+    # Convert degrees to radians for numpy
+    lat1 = lat/180*np.pi
+    lon1 = lon/180 * np.pi
+    brng = bearing/180*np.pi
+    d = distance/180*np.pi
+
+    # Compute latitude
+    lat2 = np.arcsin(np.sin(lat1) * np.cos(d)
+                     + np.cos(lat1) * np.sin(d) * np.cos(brng))
+
+    # Compute longitude
+    lon2 = lon1 + np.arctan2(np.sin(brng) * np.sin(d) * np.cos(lat1),
+                             np.cos(d) - np.sin(lat1) * np.sin(lat2))
+
+    # Convert back
+    lat2 = lat2/np.pi*180
+    lon2 = lon2/np.pi*180
+
+    # Correct the longitude lattitude values
+    lon2 = np.where(lon2 < -180.0, lon2+360.0, lon2)
+    lon2 = np.where(lon2 > 180.0, lon2-360.0, lon2)
+
+    return lat2, lon2

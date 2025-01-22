@@ -1,9 +1,12 @@
 import os
 import typing as tp
 import numpy as np
+from scipy import stats
+from scipy import interpolate
 import obsnumpy as onp
 import obsplotlib.plot as opl
 import matplotlib.pyplot as plt
+from matplotlib.gridspec import GridSpec
 from . import utils
 
 def plot_check(ds1: onp.Dataset, ds2: onp.Dataset, label1='Direct', label2='Obspy',
@@ -44,9 +47,11 @@ def set_time_scaling(t):
 def plot_check_section(dss, labels=['Observed','Synthetic'],
                        component = 'Z', mindist=30.0, maxdist=np.inf,scale=1.0,
                        limits = None, start_idx=0, step_idx=1, end_idx=1000000,
+                       plot_misfit=False, 
                        plot_misfit_reduction=False, 
                        colors = ['k', 'tab:red', 'tab:blue', 'tab:orange'],
                        lw = 0.75,
+                       ls = '-',
                        fill=False,
                        fillcolors = ['k', 'tab:red', 'tab:blue', 'tab:orange'],
                        fillkwargs: dict = {},
@@ -58,7 +63,9 @@ def plot_check_section(dss, labels=['Observed','Synthetic'],
                        va='center',
                        tickfontsize='small',
                        vals=None, valformat="{:.2f}", valtitle=None,
-                       positive_only=False):
+                       positive_only=False,
+                       labelbox=True,
+                       plot_custom_figure=False):
 
     # Check if the first dataset has an origin time attribute
     if hasattr(dss[0].meta.stations.attributes, 'origin_time'):
@@ -78,6 +85,11 @@ def plot_check_section(dss, labels=['Observed','Synthetic'],
     xlabel = f"{xlabel} [{unit}]"
     xlim = (xlim[0] / tscale, xlim[1] / tscale)
 
+    if isinstance(lw, float):
+        lw = [lw]*len(dss)
+    
+    if isinstance(ls, str):
+        ls = [ls]*len(dss)
     
     # Create figure
     ax = plt.gca()
@@ -133,10 +145,13 @@ def plot_check_section(dss, labels=['Observed','Synthetic'],
             for _i, (_y,_x) in enumerate(zip(y.T, x)):
                 zorder = xM - _x 
                 ax.fill_between((ds.t + tshift)/tscale, _x, _y, fc=fillcolors[i], **fillkwargs, zorder=zorder-0.0001, clip_on=True)
-                ax.plot((ds.t + tshift)/tscale, _y, c=colors[i], lw = lw, clip_on=True, zorder=zorder)
+                ax.plot((ds.t + tshift)/tscale, _y, c=colors[i], lw=lw[i], ls=ls[i], clip_on=True, zorder=zorder)
         else:
-            ax.plot((ds.t + tshift)/tscale, y, c=colors[i], lw = lw)
-            ax.plot([],[], c=colors[i], label=labels[i], lw = lw)
+            xM = np.max(x)
+            for _i, (_y,_x) in enumerate(zip(y.T, x)):
+                zorder = xM - _x 
+                ax.plot((ds.t + tshift)/tscale, _y, c=colors[i], lw=lw[i], ls=ls[i],zorder=zorder, clip_on=False)    
+            ax.plot([],[], c=colors[i], label=labels[i], lw=lw[i], ls=ls[i])
 
     # Splitup network and station codes 
     netcodes = [_code.split('.')[0] for _code in dss[0].meta.stations.codes]
@@ -185,6 +200,42 @@ def plot_check_section(dss, labels=['Observed','Synthetic'],
         
         twin_ax.set_yticks(x,[f"{misfit_reduction[i]:>3.0f}%" for i in POS],
             rotation=0, va=va, fontsize=tickfontsize)
+        
+    # Compute misfit reduction only if three datasets are provided
+    if plot_misfit and len(dss) == 2:
+        
+        # Define normalize l2 misfit
+        def norm_l2(obs, syn):
+            return np.sum((syn.data - obs.data)**2, axis=-1)/np.sum(obs.data**2, axis=-1)
+        
+        def rel_err(obs, syn):
+            return np.mean(np.abs(syn.data - obs.data)/np.max(np.abs(obs.data)), axis=-1)
+        
+        # Compute the two misfits
+        m1 = norm_l2(dss[0], dss[1])[:,0]*100
+        
+        # Compute overall misfit reduction
+        total_misfit = np.median(m1)
+        
+        
+        # Plot text about the total misfit reduction
+        plt.text(1.01, 0.0, f'{total_misfit:>.5f}', ha='left', va='top', 
+                 fontweight='bold', 
+                 transform=ax.transAxes)
+
+        # Create a twin axis on the right side with misfit reduction
+        twin_ax = ax.twinx()
+        
+        # Remove spines if desired
+        if remove_spines:
+            twin_ax.spines['left'].set_visible(False)
+            twin_ax.spines['right'].set_visible(False)
+            twin_ax.spines['top'].set_visible(False)
+            twin_ax.spines['bottom'].set_visible(False)
+            twin_ax.tick_params(axis='both', left=False, right=False, top=False, bottom=False)
+        
+        twin_ax.set_yticks(x,[f"{m1[i]:>.5f}" for i in POS],
+            rotation=0, va=va, fontsize=tickfontsize)
     
     # If desired plot either azimuth or distance on the right side
     if plot_right_annotations:
@@ -205,7 +256,11 @@ def plot_check_section(dss, labels=['Observed','Synthetic'],
                 
             # Plot epicentral distance info on the right side
             _x = np.append(x, x[-1] + 1)
-            bbox_dict = dict(fc="w", ec="None", lw=0.0, alpha=0.85, pad=0.1)
+            
+            if labelbox:
+                bbox_dict = dict(fc="w", ec="None", lw=0.0, alpha=0.85, pad=0.1)
+            else:
+                bbox_dict = dict(fc="None", ec="None", lw=0.0, alpha=0.0, pad=0.0)
             
             if vals is not None:
                 geoformat = "{:>3.0f},{:>3.0f}," + valformat
@@ -238,16 +293,17 @@ def plot_check_section(dss, labels=['Observed','Synthetic'],
     ax.set_xlim(xlim)
     
     # Get some percentage of min/max Y range
-    if plot_real_distance:
+    if plot_real_distance or plot_custom_figure:
         dy = 0.01 * (maxY - minY)
         ax.set_ylim(minY - dy, maxY + 5*dy)
     else:
         if positive_only:
-            ax.set_ylim(-0.25, np.maximum(15, len(POS) + 1 + scale))
+            ax.set_ylim(-0.25, np.maximum(15, len(POS) + 1 + _scale))
         else:
-            ax.set_ylim(-scale, np.maximum(15, len(POS) + 1 + scale) )
+            # Get y min mx
+            ax.set_ylim(-1, np.maximum(15, len(POS) + 1) )
     
-    if plot_misfit_reduction and len(dss) == 3 or (plot_right_annotations and not plot_real_distance and not plot_misfit_reduction):
+    if plot_misfit_reduction and len(dss) == 3 or plot_misfit and len(dss) == 2 or (plot_right_annotations and not plot_real_distance and not plot_misfit_reduction):
         twin_ax.set_xlim(ax.get_xlim())    
         twin_ax.set_ylim(ax.get_ylim())    
         return ax, twin_ax
@@ -322,6 +378,7 @@ def plot_full_section(dss, labels, stfs, mt, stf_scale=1e23, scale=5.0, limits=[
 
     ax = plot_check_section(dss, labels=labels, component=component,
                     scale=scale, start_idx=0, step_idx=1, limits=limits, plot_misfit_reduction=True,
+                    lw = 0.25,
                     legendkwargs=dict(loc='center right', bbox_to_anchor=(1.0, 1.0), borderaxespad=0.0, 
                                         columnspacing=1.0, fontsize='small'))
     if isinstance(ax, tuple):
@@ -330,55 +387,60 @@ def plot_full_section(dss, labels, stfs, mt, stf_scale=1e23, scale=5.0, limits=[
     opl.plot_label(ax, '(c)', fontsize='small', location=12, box=False, dist=0.01, fontweight='bold', zorder=10)
     
     colors = ['k', 'tab:red', 'tab:blue', 'tab:orange']
-    subax = opl.axes_from_axes(ax, 12341, [0.0, 1.0, 0.35, 0.075])
     
-    opl.plot_label(subax, '(b)', fontsize='small', location=12, box=False, dist=0.01, fontweight='bold')
-    
-    
-    # This is because we assume the data is the first element and of course does not
-    # come with an STF
-    idx_shift = len(dss) - len(stfs)
+    if stfs is not None:
+        subax = opl.axes_from_axes(ax, 12341, [0.0, 1.0, 0.35, 0.075])
         
-    for _i, _stf in enumerate(stfs):
-        _stf.plot(normalize=stf_scale, lw=0.75, c=colors[_i + idx_shift])
+        opl.plot_label(subax, '(b)', fontsize='small', location=12, box=False, dist=0.01, fontweight='bold')
         
-    plt.xlim(0, 125)
+        
+        # This is because we assume the data is the first element and of course does not
+        # come with an STF
+        
+        idx_shift = len(dss) - len(stfs)
+            
+        for _i, _stf in enumerate(stfs):
+            _stf.plot(normalize=stf_scale, lw=0.75, c=colors[_i + idx_shift])
+            
+        plt.xlim(0, 125)
 
-    # remove left,right and top spines from subax
-    subax.spines['top'].set_visible(False)
-    subax.spines['right'].set_visible(False)
-    subax.spines['left'].set_visible(False)
+        # remove left,right and top spines from subax
+        subax.spines['top'].set_visible(False)
+        subax.spines['right'].set_visible(False)
+        subax.spines['left'].set_visible(False)
 
-    # offset bottom spine
-    subax.spines['bottom'].set_position(('outward', 2))
+        # offset bottom spine
+        subax.spines['bottom'].set_position(('outward', 2))
 
-    # Make tick labels small
-    subax.tick_params(which='both', axis='both', labelsize='small')
-    subax.tick_params(which='both', axis='y', labelleft=False, left=False)
+        # Make tick labels small
+        subax.tick_params(which='both', axis='both', labelsize='small')
+        subax.tick_params(which='both', axis='y', labelleft=False, left=False)
 
-    beachax = opl.axes_from_axes(ax, 12342, [-0.2, 1.0, 0.2, 0.075])
-    beachax.axis('off')
-    plotb(
-            0.5,
-            0.5,
-            mt.tensor,
-            linewidth=0.25,
-            width=75,
-            facecolor='tab:red',
-            normalized_axes=True,
-            ax=beachax,
-            clip_on=False,
-            pdf=True
-        )
-    beachax.set_xlim(0,1)
-    beachax.set_ylim(0,1)
-    opl.plot_label(beachax, '(a)', fontsize='small', location=3, box=False, dist=0.01, fontweight='bold', zorder=10)
-    
+    if mt is not None:
+        
+        beachax = opl.axes_from_axes(ax, 12342, [-0.2, 1.0, 0.2, 0.075])
+        beachax.axis('off')
+        plotb(
+                0.5,
+                0.5,
+                mt.tensor,
+                linewidth=0.25,
+                width=80,
+                facecolor='tab:red',
+                normalized_axes=True,
+                ax=beachax,
+                clip_on=False,
+                pdf=True
+            )
+        beachax.set_xlim(0,1)
+        beachax.set_ylim(0,1)
+        opl.plot_label(beachax, '(a)', fontsize='small', location=3, box=False, dist=0.01, fontweight='bold', zorder=10)
+        
 
-    plt.subplots_adjust(left=0.2, right=0.9, top=0.9, bottom=0.1)
-    fig.set_size_inches(8, 10)
-    fig.savefig(outfile)
-    plt.close(fig)
+        plt.subplots_adjust(left=0.2, right=0.9, top=0.9, bottom=0.1)
+        fig.set_size_inches(8, 10)
+        fig.savefig(outfile)
+        plt.close(fig)
     
     
 def plot_sub_section(dss, labels, stfs, mt, scale=5.0, limits=[12.5*60,27.5*60], outfile='sub_section.pdf',
@@ -388,8 +450,9 @@ def plot_sub_section(dss, labels, stfs, mt, scale=5.0, limits=[12.5*60,27.5*60],
     
     fig = plt.figure()
 
-    ax = plot_check_section(dss, labels=labels, component=component,
+    ax, _ = plot_check_section(dss, labels=labels, component=component,
                     scale=scale, start_idx=start_idx, step_idx=step_idx, end_idx=end_idx, limits=limits, plot_misfit_reduction=True,
+                    plot_custom_figure=True,
                     legendkwargs=dict(loc='center right', bbox_to_anchor=(1.0, 1.0), borderaxespad=0.0, 
                                         columnspacing=1.0, fontsize='small'))
     
@@ -826,7 +889,7 @@ def azi_plot(dss: tp.List[onp.Dataset], theta_bin, dy, hspace=0.0, phase='P', ts
     return mainax, axes
 
 
-def plot_stationwise(stfss, limits=(0, 300), ax=None, plot_tmaxs=True):
+def plot_stationwise(stfss, limits=(0, 300), ax=None, plot_tmaxs=True, tickfontsize='x-small', labelbox=True):
     
     
     if ax is None:
@@ -858,9 +921,9 @@ def plot_stationwise(stfss, limits=(0, 300), ax=None, plot_tmaxs=True):
                                     fillkwargs=dict(alpha=1.0, color=fillcolor, linewidth=0.0), 
                                     step_idx=1, colors=['w'], azi=True, plot_real_distance=azi_true, 
                                     lw=0.25, remove_spines=True, component=_stf.meta.components[0],
-                                    plot_right_annotations=True, va='baseline', tickfontsize='x-small',
+                                    plot_right_annotations=True, va='baseline', tickfontsize=tickfontsize,
                                     vals=_stf.meta.stations.attributes.ints[argazi], valformat='{:4.2f}', valtitle='\mathit{Int.}',
-                                    positive_only=True)
+                                    positive_only=True, labelbox=labelbox)
         taxes.append(_tax)
         
         # if _i > 0:
@@ -1047,7 +1110,7 @@ def plot_stf_end_pick(t, stf, label, extension=False, label_outside=False):
     
     # Find elbow point idx
     idx = utils.find_elbow_point(t[:idx], 1-STF[:idx]) 
-    idx += 10/dt
+    idx += t[idx]/10/dt
     idx = int(idx)
     
     
@@ -1540,7 +1603,7 @@ def plot_elbow_point_selection(t, stf, label, extension=False, label_outside=Fal
         utils.log(f'Log: {A_log:6.4f}, {B_log:6.4f}')
     else:
         # Mark 90% of the cumulative STF    
-        idx = np.argmin(np.abs(STF - 0.90))
+        idx = np.argmin(np.abs(STF - 0.95))
     
     if label_outside:
         location=7
@@ -1549,7 +1612,7 @@ def plot_elbow_point_selection(t, stf, label, extension=False, label_outside=Fal
         
     # Find elbow point idx
     idxf = utils.find_elbow_point(t[:idx], 1-STF[:idx]) 
-    idxf += 10/dt
+    idxf += t[idxf]/10/dt
     idxf = int(idxf)
     
     ratio = np.maximum(t[idx], 300.0)/300.0
@@ -1656,3 +1719,283 @@ def plot_elbow_point_selection(t, stf, label, extension=False, label_outside=Fal
                         bottom=bottombound, top=topbound)
     
     # plt.subplots_adjust(left=leftbuffer, right=1-rightbuffer, bottom=bottombuffer, top=1-topbuffer)
+    
+    
+def plot_cumulative_stf(t, fstfs, components, phases, plotdir):
+    
+    plt.figure()
+    for _i, (_component, _phase) in enumerate(zip(components, phases)):
+        ax = plt.subplot(3,1,_i+1)
+        plot_stf_end_pick(t, fstfs[_i], label=f'{_component} {_phase}',
+                                   extension=True, label_outside=False)        
+        plt.legend(frameon=False, ncol=6, bbox_to_anchor=(0.0, 1.0), loc='lower left',
+                   borderaxespad=0., fontsize='small')
+        if _i == 2:
+            plt.xlabel('Time [s]')
+        else:
+            ax.tick_params(axis='x', which='both', labelbottom=False)
+        plt.ylim(-0.05, 1.05)
+        plt.axhline(0.0, c=(0.7,0.7,0.7), ls='-', lw=1.0, zorder=-1)
+        
+    
+    plt.subplots_adjust(hspace=0.3)
+    plt.savefig(os.path.join(plotdir, 'stf_cumulative.pdf'))
+
+
+
+def is_outlier(points, thresh=3.5):
+    """
+    Returns a boolean array with True if points are outliers and False 
+    otherwise.
+
+    Parameters:
+    -----------
+        points : An numobservations by numdimensions array of observations
+        thresh : The modified z-score to use as a threshold. Observations with
+            a modified z-score (based on the median absolute deviation) greater
+            than this value will be classified as outliers.
+
+    Returns:
+    --------
+        mask : A numobservations-length boolean array.
+
+    References:
+    ----------
+        Boris Iglewicz and David Hoaglin (1993), "Volume 16: How to Detect and
+        Handle Outliers", The ASQC Basic References in Quality Control:
+        Statistical Techniques, Edward F. Mykytka, Ph.D., Editor. 
+    """
+    if len(points.shape) == 1:
+        points = points[:,None]
+    median = np.median(points, axis=0)
+    diff = np.sum((points - median)**2, axis=-1)
+    diff = np.sqrt(diff)
+    med_abs_deviation = np.median(diff)
+
+    modified_z_score = 0.6745 * diff / med_abs_deviation
+
+    return modified_z_score > thresh
+
+
+def plot_measurements_histograms(measurements, phasecomp_order, misfitlabels, misfitcolors, misfitlinestyles, outfile,
+                                 remove_outliers=False):
+    
+    if len(misfitlabels) != len(misfitcolors):
+        raise ValueError("The number of misfit labels and misfit colors must be the same.")
+    
+    nbins = 25
+    
+    mlabeldict = {
+        'L2_power': r'$L_2$', 
+        'maxcc': r'$CC_{\max}$', 
+        'time_shift': r'$\Delta t$', 
+        'corr_ratio': r'$S_R$', 
+        'dlna': r'$\mathrm{d}\ln A$'
+    }
+    mranges = {
+        'L2_power': (0, 1),
+        'maxcc': (0, 1),
+        'time_shift': (-10, 10),
+        'corr_ratio': (0.25, 1.75),
+        'dlna' : (-0.75, 0.75)   
+    }
+    
+    prange_time_shift = dict(surface=(-15,15), body=dict(P=(-10.0,10.0), S=(-10,10)))
+    prange_maxcc = dict(surface=(0.75,1), body=(0, 1))
+    
+    
+    Nrows = len(phasecomp_order)
+    Ncols = len(mlabeldict)
+    
+    width = Ncols * 1.75
+    height = Nrows * 1.25
+    
+    rbound = 0.1
+    lbound = 0.1
+    tbound = 0.05
+    bbound = 0.1
+    bufferwidth = width * lbound + width * rbound
+    bufferheight = height * tbound + height * bbound  
+    
+    fig = plt.figure(figsize=(width + bufferwidth, height + bufferheight))
+    
+    gs = GridSpec(Nrows, Ncols, hspace=0.3, wspace=0.3, figure=fig)  
+    
+    for _i, _phase_label in enumerate(phasecomp_order):
+        
+        for _j, (_attname, _attlabel) in enumerate(mlabeldict.items()):
+            
+                        
+            ax = fig.add_subplot(gs[_i, _j])
+            
+            # Spacify range, just so that the histograms are comparable between events
+            if _attname == 'time_shift':
+                
+                if 'Rayleigh' in _phase_label or 'Love' in _phase_label:
+                    _range = prange_time_shift['surface']
+                else:
+                    if 'P' in _phase_label:
+                        _range = prange_time_shift['body']['P']
+                        
+                    else:
+                        _range = prange_time_shift['body']['S']
+            elif _attname == 'maxcc':
+                if 'Rayleigh' in _phase_label or 'Love' in _phase_label:
+                    _range = prange_maxcc['surface']
+                else:
+                    _range = prange_maxcc['body']
+            else:
+                _range = mranges[_attname]
+                
+            # Get a vecor X to represent the KDE.
+            xx = np.linspace(_range[0], _range[1], 500)
+            
+            for _k, _label in enumerate(misfitlabels):
+                
+                # Sepcifify the number of bins for the first measurement set and then use the same for the rest
+                # to make the distributions comparable
+                if _k == 0:
+                    if _attname == 'time_shift':
+                        bins = int(_range[1]-_range[0])
+                        
+                        # Reduce the number of bins if it is even so that one bin is centered at zero
+                        # This is only for the time_shift and because our sampling rate is 1Hz
+                        if (bins % 2) == 0:
+                            bins -= 1
+                    else:
+                        bins = nbins
+                else:
+                    bins = bins
+                    
+                __m__ = np.array(measurements[_phase_label][_label][_attname])
+                _, bins, _ = ax.hist(__m__, bins=bins, edgecolor=misfitcolors[_k], lw=0.25, alpha=0.5,
+                                     ls=misfitlinestyles[_k], histtype='stepfilled', facecolor='none', range=_range, density=True)
+                
+                # Find outliers, with a different threshold for Ptrain and the rest
+                # Most likely a result of the sampling at 1Hz
+                if "Ptrain" in _phase_label and _attname == 'time_shift' and 'STF' in _label:
+                    threshold = 3.5
+                    bw_method = 0.5
+                else:
+                    threshold = 3.5
+                    bw_method = None
+                
+                # Remove outliers for KDE 
+                if remove_outliers:
+                    is_cool = is_outlier(__m__, thresh=threshold) == False
+                else:
+                    is_cool = np.ones_like(__m__, dtype=bool)
+                
+                # Compute KDE
+                kde = stats.gaussian_kde(__m__[is_cool], bw_method=bw_method)
+                
+                # Plot KDE for simple comparison    
+                ax.plot(xx, kde(xx), c=misfitcolors[_k], lw=0.5, label=f'{_label}', ls=misfitlinestyles[_k])
+            
+            # Plot vertical line at zero for dlna and time_shift and at 1 for corr_ratio
+            if _attname == 'time_shift':
+                ax.axvline(0, c='k', ls='--', lw=0.25)
+            elif _attname == 'corr_ratio':
+                ax.axvline(1, c='k', ls='--', lw=0.25)
+            elif _attname == 'dlna':
+                ax.axvline(0, c='k', ls='--', lw=0.25)
+            
+            # Set the limits of the axes
+            ax.set_xlim(_range)
+            
+            # Remove the y labels for all but the first column
+            ax.tick_params(axis='y', labelleft=False)
+            
+            if _i == Nrows-1:
+                ax.set_xlabel(_attlabel)
+                
+            if _j == 0:
+                ax.set_ylabel(_phase_label, rotation=0, ha='right', va='center')
+        
+            if _i == 0 and _j == Ncols-1:
+                plt.legend(frameon=False, fontsize='small', loc='lower right', bbox_to_anchor=(1.0, 1.0), ncols = len(misfitlabels))
+        
+    plt.subplots_adjust(left=lbound, right=1-rbound, top=1-tbound, bottom=bbound)
+    plt.savefig(outfile)
+    
+    
+
+def plot_circular_STF(stf: onp.Dataset):
+    
+    # Get the index of 300s
+    idx300 = np.argmin(np.abs(stf.t - 301.))
+    t = stf.t[:idx300]
+    
+    # Get the azimuths and the data
+    az = stf.meta.stations.azimuths
+    pos = np.argsort(az)
+
+    
+    # Get sorted STFs
+    data = stf.data[pos,0,:idx300]
+    
+    # Get sorted azimuths
+    azs = az[pos]
+    
+    # Simply extend the data for the full circle interpolate and then reduce to 
+    astack = np.hstack((azs-360,azs,azs+360))
+    dstack = np.vstack((data,data,data))
+    print(astack)
+    
+    A, T = np.meshgrid(astack, t, indexing='ij')
+    
+    print('----------')
+    print(astack.shape, t.shape)
+    print(A.shape, T.shape, dstack.shape)
+    
+    print([astack.min(), astack.max(), t.min(), t.max()])
+
+    # Create interpolator kx=1 was really what did it !! I guess the points are too far spaced    
+    INT = interpolate.RectBivariateSpline(astack, t, dstack, kx=1, ky=1)    
+    
+    # Create grid
+    iaz = np.linspace(0, 360, 360)
+    it = np.linspace(0, 300, 100)
+    
+    # Create meshgrid
+    IA, IT = np.meshgrid(iaz, it, indexing='ij')
+
+    # Interpolate
+    ID = INT(iaz, it)
+    
+    
+    print('----------')
+    print(iaz.shape, it.shape)
+    print(IA.shape, IT.shape, ID.shape)
+    
+    
+    # Plot
+    fig, ax = plt.subplots(subplot_kw={'projection': 'polar'})
+    
+    # ax.contourf(np.radians(A), T, dstack, cmap='viridis')
+    cmap = plt.get_cmap('gray_r')   
+    cmap.set_under = 'w'
+    
+    c =ax.contourf(np.radians(IA), IT, ID, cmap='gray_r', vmin=0.005)
+    
+    ax.set_theta_zero_location('N')
+    ax.set_theta_direction(-1)
+    ax.set_ylim(0, 100)
+    lines, labels = plt.rgrids(np.arange(0,100,20), fmt='%d', )
+    for _line in lines:
+        _line.set_linewidth(0.5)
+        _line.set_color('k')
+        _line.set_alpha(0.5)   
+        
+    tlines, labels = plt.thetagrids(np.arange(0, 360, 45), ) 
+    for _line in tlines:
+        _line.set_linewidth(0.75)
+        _line.set_color('k')
+        _line.set_alpha(0.5)   
+    
+    plt.colorbar(c)
+        
+    
+    plt.savefig('circular_stf.pdf')
+    
+    

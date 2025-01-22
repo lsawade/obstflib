@@ -28,7 +28,7 @@ class Inversion(object):
     diff_weight = 1.0
     verbose: bool = False
 
-    def __init__(self, t, data, G, tapers=None, config=None):
+    def __init__(self, t, data, G, tapers=None, config=None, azimuthalweights=None):
 
         # Data/synthetic inputs
         self.t = t
@@ -49,6 +49,16 @@ class Inversion(object):
             self.forward = self.__forward_tapered__
         else:
             self.forward = self.__forward__
+
+        # Azimuthal weights
+        if azimuthalweights is not None:
+            self.loss_norm = self.__loss_norm_azimuthal__
+            self.gradient_norm = self.__gradient_norm_azimuthal__
+            self.azimuthalweights = azimuthalweights
+        else:
+            self.loss_norm = self.__loss_norm__
+            self.gradient_norm = self.__gradient_norm__
+
 
         # Fourier transform of the Green's function
         self.FG = fft(G, n=self.ntfft, axis=-1)
@@ -177,7 +187,7 @@ class Inversion(object):
 
         return grad
 
-    def loss_norm(self, c):
+    def __loss_norm__(self, c):
 
         return (
             0.5
@@ -189,7 +199,7 @@ class Inversion(object):
             / self.N
         )
 
-    def gradient_norm(self, c):
+    def __gradient_norm__(self, c):
 
         # Compute the residual
         residual = self.forward(c) - self.data
@@ -210,6 +220,44 @@ class Inversion(object):
         )
 
         return grad
+
+    def __loss_norm_azimuthal__(self, c):
+
+        return (
+            0.5
+            * np.sum(
+                self.azimuthalweights
+                * np.sum((self.forward(c) - self.data) ** 2, axis=1)
+                * self.dt
+                / (np.sum(self.data**2, axis=1) * self.dt)
+            )
+            / self.N
+        )
+
+    def __gradient_norm_azimuthal__(self, c):
+
+        # Compute the residual
+        residual = self.forward(c) - self.data
+
+        # Computing the product of the derivative model parameters and
+        # convolutions of Green functions and base Bsplines
+        g = 2 * c[:, None, None] * self.GBsplines * self.dt
+
+        # This beast is the gradient of the loss function with respect to the
+        grad = (
+            np.sum(
+                self.azimuthalweights
+                * np.sum(residual[None, :, :] * g, axis=-1)
+                * self.dt
+                / self.dataN[None, :],
+                axis=-1,
+            )
+            / self.N
+        )
+
+        return grad
+
+
 
     def loss_integral_penalty(self, c):
 
@@ -234,16 +282,23 @@ class Inversion(object):
 
     def cost_smoothness_first_order(self, c):
         """Forward FD punishes adjacent model coefficients that are different."""
+        
+        # Normalize the cost by the number of coefficients
+        N = len(c)
+        
         # Forward FD
         Cfw = np.sum((c[1:] ** 2 - c[0:-1] ** 2) ** 2)
 
         Cbw = np.sum((c[-1] ** 2 - c[-2] ** 2) ** 2)
 
-        return Cfw + Cbw
+        return (Cfw + Cbw)/N
 
     def gradient_smoothness_first_order(self, c):
         """Forward FD punishes adjacent model coefficients that are different."""
 
+        # Normalize the cost by the number of coefficients
+        N = len(c)
+        
         # Gradient of the above loss_smoothness function with respect to c
         grad = np.zeros_like(c)
 
@@ -254,22 +309,35 @@ class Inversion(object):
 
         grad[-1] = 8 * c[-1] * (c[-1] ** 2 - c[-2] ** 2)
 
-        return grad
+        return grad/N
 
     def cost_bound0(self, c):
-        return np.sum((c[: self.k]) ** 2)
+        
+        return np.sum((c[: self.k]) ** 2)/self.k
 
     def gradient_bound0(self, c):
         grad = np.zeros_like(c)
         grad[: self.k] = 2 * c[: self.k]
-        return grad
+        return grad/self.k
 
     def cost_boundN(self, c):
-        return np.sum((c[-1]) ** 2)
+        
+        # Last index is penalized to be zero
+        c1 = np.sum((c[-1]) ** 2)
+        
+        # The last element is penalized to be zero and the difference between the last two elements is minimized
+        c2 = 2 * 0.5 * np.sum((c[-self.k-1:-1] - c[-self.k:]) ** 2)
+        
+        return c1 + c2
 
     def gradient_boundN(self, c):
+        # The last element is penalized to be zero and the difference between the last two elements is minimized
         grad = np.zeros_like(c)
-        grad[-1] = 2 * c[-1]
+        
+        grad[-self.k-1:-1] += 2 * (c[-self.k-1:-1] - c[-self.k:])/self.k
+        grad[-self.k-1:-1] += 2 * -(c[-self.k-2:-2] - c[-self.k-1:-1])/self.k
+        grad[-1] += 2 * c[-1] + 2 * -(c[-2] - c[-1])
+        
         return grad
     
     def cost_diff(self, c):
@@ -334,7 +402,9 @@ class Inversion(object):
         C4 = self.cost_bound0(c)
         C5 = self.cost_boundN(c)
         if self.verbose:
+            print('------------------------------------------------------')
             print(f"C1={C1:g}, C2={C2:g}, C3={C3:g}, C4={C4:g}, C5={C5:g}")
+            print(f"C1={C1 * self.weight:g}, C2={self.penalty_weight *C2:g}, C3={self.smooth_weight *C3:g}, C4={self.bound_weight * C4:g}, C5={self.bound_weight * C5:g}")
         return (
             self.weight * C1
             + self.penalty_weight * C2

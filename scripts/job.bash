@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH -A GEO111
-#SBATCH -t 40:00
-#SBATCH -N115
+#SBATCH -t 20:00
+#SBATCH -N60
 #SBATCH -J STF-Inversion
 #SBATCH -p batch
 #SBATCH --output=STF.%J.o.txt
@@ -48,23 +48,23 @@ job_limit () {
 }
 ############################################################################################################
 
-array=("body Z" "Ptrain Z" "Strain T") # "P Z" "P R" "S Z" "S R" "S T" "Ptrain Z" "Ptrain R" "Strain Z" "Strain R" "Strain T")
+# array=("body Z" "Ptrain Z" "Strain T") # "P Z" "P R" "S Z" "S R" "S T" "Ptrain Z" "Ptrain R" "Strain Z" "Strain R" "Strain T")
 
 stfdir="/ccs/home/lsawade/gcmt/obstflib/scripts/STF"
 
-for ARR in "${array[@]}"; do
+# for ARR in "${array[@]}"; do
 
-    for DIR in $(ls $stfdir); do
-        if [ $DIR == "README.md" ]; then
-            continue
-        fi
-        cmd="python invert_cmt3d+.py STF/$DIR $ARR"
-        echo "$cmd"
-        srun -N1 -n1 -c40 -o logs/$DIR -e logs/$DIR $cmd &
-        job_limit $(($SLURM_JOB_NUM_NODES+1))
-        
-    done
+for DIR in $(ls $stfdir); do
+    if [ $DIR == "README.md" ]; then
+        continue
+    fi
+    cmd="python invert_scardec_style_2.py STF/$DIR"
+    echo "$cmd"
+    srun -N1 -n1 -c40 --unbuffered -o logs/$DIR -e logs/$DIR $cmd &
+    job_limit $(($SLURM_JOB_NUM_NODES+1))
+    
 done
+# done
 wait
 
 

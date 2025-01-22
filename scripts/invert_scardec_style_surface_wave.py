@@ -5,6 +5,7 @@ import sys
 import datetime
 import os
 import glob
+from copy import deepcopy
 import obspy
 import numpy as np
 import matplotlib.pyplot as plt
@@ -39,8 +40,9 @@ if ("IPython" in sys.argv[0]) or ("ipython" in sys.argv[0]):
     # scardec_stf_dir = './STF/FCTs_20030925_195006_HOKKAIDO__JAPAN_REGION'
     # scardec_stf_dir = './STF/FCTs_20060420_232502_EASTERN_SIBERIA__RUSSIA'
     # scardec_stf_dir = './STF/FCTs_20050926_015537_NORTHERN_PERU'
-    # scardec_stf_dir = './STF/FCTs_20070815_234057_NEAR_COAST_OF_PERU'
-    scardec_stf_dir = './STF/FCTs_20070912_111026_SOUTHERN_SUMATRA__INDONESIA'
+    scardec_stf_dir = './STF/FCTs_20070815_234057_NEAR_COAST_OF_PERU'
+    # scardec_stf_dir = './STF/FCTs_20070912_111026_SOUTHERN_SUMATRA__INDONESIA'
+    # scardec_stf_dir = './STF/FCTs_20170122_043022_SOLOMON_ISLANDS'
     # scardec_stf_dir = './STF/FCTs_20090810_195538_ANDAMAN_ISLANDS__INDIA_REGION'
     # scardec_stf_dir = './STF/FCTs_20090103_194350_IRIAN_JAYA_REGION__INDONESIA'
     # scardec_stf_dir = './STF/FCTs_20090930_101609_SOUTHERN_SUMATRA__INDONESIA'
@@ -86,7 +88,7 @@ except IndexError:
 # %%
 
 
-outdir = os.path.join('/lustre/orion/geo111/scratch/lsawade', 'STF_results_scardec_not_smooth', f'{scardec_id}')
+outdir = os.path.join('/lustre/orion/geo111/scratch/lsawade', 'STF_results_surface', f'{scardec_id}')
 plotdir = os.path.join(outdir, 'plots')
 datadir = os.path.join(outdir, 'data')
 os.makedirs(plotdir, exist_ok=True)
@@ -258,7 +260,6 @@ plt.savefig(os.path.join(plotdir, 'data_cmt3d+_stf.pdf'), dpi=300)
 
 ds_obsd, ds_gree = obsd_ds.intersection(gree_ds)
 _, ds_cmt3 = obsd_ds.intersection(cmt3_ds)
-
 ds_cmt3.convolve(cstf.f/cstf.M0, tshift)
 
 # %%
@@ -273,232 +274,24 @@ for _component, _phase in zip(components, phases):
     fig.savefig(os.path.join(plotdir, f'{_component}_{_phase}_data_cmt3d_green.pdf'))
     plt.close(fig)
 
-
 # %%
-# Note that any P is really my definition of any P arrival from taup P
-# and that could be P, Pdiff, PKP
-osl.utils.log("Getting arrivals")
-
-allphases = ['P', 'S', 'Rayleigh', 'Love', 'anyP', 'anyS']
-
-for _phase in allphases:
-
-    onp.tt.get_arrivals(cmt3, ds_obsd, phase=_phase)
-    onp.tt.get_arrivals(cmt3, ds_gree, phase=_phase)
-    onp.tt.get_arrivals(cmt3, ds_cmt3, phase=_phase)
-
-# %%
-# Compute SNR
-# osl.utils.log("Computing SNR")
-# onp.utils.compute_snr(ds_obsd, tshift, period=17.0)
-
-#%%
-# Create SNR figure
-def plot_snr(ds, component, phase, plotdir, ds2=None):
-
-    idx = ds.meta.components.index(component)
-    plt.figure()
-    plt.subplot(2,2,1)
-    plt.plot(ds.meta.stations.attributes.snr_int[:, idx], ds.meta.stations.attributes.snr_max[:, idx], 'o')
-    plt.xlabel('SNR int')
-    plt.ylabel('SNR max')
-    plt.subplot(2,2,2)
-    plt.hist(ds.meta.stations.attributes.snr_max[:, idx])
-    plt.xlabel('SNR max')
-    plt.subplot(2,2,3)
-    plt.hist(ds.meta.stations.attributes.snr_int[:, idx])
-    plt.xlabel('SNR int')
-    plt.savefig(os.path.join(plotdir, f'{component}_{phase}_snr.pdf'))
-    
-        
-    if ds2 is not None:
-        
-        fig = plt.figure(figsize=(10,8))
-        osl.plot.plot_check_section([ds, ds2], labels=['Observed', 'CMT3D+'],
-                        scale=5.0, limits=[0*60,60*60], plot_misfit_reduction=False,component=component,
-                        vals=ds.meta.stations.attributes.snr_int[:, idx], valtitle='\mathrm{SNR}_{I}',
-                        valformat='{:7.2g}', plot_right_annotations=True )
-        plt.subplots_adjust(left=0.2, right=0.9, top=0.975, bottom=0.1)
-        fig.set_size_inches(8, 10)
-        fig.savefig(os.path.join(plotdir, f'{component}_{phase}_snr_data_cmt3d.pdf'))
-        plt.close(fig)
-
-def plot_misfits(ds1, ds2, component, phase, plotdir, label='misfit_data_cmt3d'):
-    idx = ds1.meta.components.index(component)
-    fig = plt.figure()
-    osl.plot.plot_check_section([ds1, ds2], labels=['Observed', 'CMT3D+'],
-                    scale=5.0, limits=[0*60,60*60], plot_misfit_reduction=False,component=component,
-                    vals=onp.utils.L2(ds1, ds2, normalize=True)[:, idx], valtitle='L^2_N',
-                    valformat='{:5.3f}', plot_right_annotations=True )
-    plt.subplots_adjust(left=0.2, right=0.9, top=0.975, bottom=0.1)
-    fig.set_size_inches(8, 10)
-    fig.savefig(os.path.join(plotdir, f'{component}_{phase}_{label}.pdf'))
-    plt.close(fig)
-
-# %%
-# Now given the selected traces we want to use the corresponding windows to taper
-# the traces such that we can perform the inversion only on the relevant windows
-# and not the whole trace.
-osl.utils.log("Selecting windows")
-obsd_tt = []
-gree_tt = []
-cmt3_tt = []
-gree_rat = []
-
-for _i, (_component, _phase) in enumerate(zip(components, phases)):
-    
-    # Subselect the seignals based on distance phases etc.
-    _obsd_tt = onp.tt.select_traveltime_subset(ds_obsd, component=_component, phase=_phase, 
-                                               mindist=30.0, maxdist=np.inf, minwindow=300.0)
-    osl.utils.log(f"Reduced traces by component/phase selection {_component} {_phase}: {ds_obsd.data.shape[0]} -> {_obsd_tt.data.shape[0]}")
-    
-    # Remove traces with low SNR
-    onp.utils.compute_snr(_obsd_tt, tshift, period=17.0, phase=_phase[0])
-    _, _cmt3 =_obsd_tt.intersection(ds_cmt3)
-    
-    
-    plot_snr(_obsd_tt, _component, _phase, plotdir, ds2=_cmt3)
-    _obsd_tt_snr, _ = onp.utils.remove_snr(_obsd_tt, snr_int_min_threshold=50.0,snr_int_max_threshold=1000000.0,
-                                     snr_max_min_threshold=5.0, snr_max_max_threshold=10000.0,
-                                     component=_component)
-    osl.utils.log(f"Removing low/high SNR traces {_obsd_tt.data.shape[0]:d} --> {_obsd_tt_snr.data.shape[0]:d}")
-    
-    # # Subselect the seignals based on distance phases etc.
-    # gree_tt.append(onp.tt.select_traveltime_subset(ds_gree_snr, component=_component, phase=_phase, 
-    #                                                mindist=30.0, maxdist=np.inf, minwindow=300.0))
-
-    # Get the corresponding observed traces
-    # ds_obsd_tt, ds_gree_tt = obsd_tt[_i].intersection(ds_gree)
-    _obsd, _gree = _obsd_tt_snr.intersection(ds_gree)
-    obsd_tt.append(_obsd)
-    gree_tt.append(_gree)
-    
-    _, _cmt3 = obsd_tt[_i].intersection(ds_cmt3)
-    cmt3_tt.append(_cmt3)
-
-    # Remove components from observed arrays
-    gree_tt[_i] = gree_tt[_i].subset(components=_component)
-    cmt3_tt[_i] = cmt3_tt[_i].subset(components=_component)
-
-#%%
-for _i, (_component, _phase) in enumerate(zip(components, phases)):
-   
-    fig = plt.figure()
-    osl.plot.plot_check_section([obsd_tt[_i], cmt3_tt[_i], gree_tt[_i]], labels=['Observed', 'CMT3D+', 'Green Functions'],
-                                component=_component)
-    plt.subplots_adjust(left=0.2, right=0.975, top=0.975, bottom=0.1)
-    fig.set_size_inches(8, 6)
-    fig.savefig(os.path.join(plotdir, f'{_component}_{_phase}_data_cmt3d_green_tt_select.pdf'))
-    plt.close(fig)
-
-
-# %%
-# Now we want to taper the traces to the selected windows
-osl.utils.log("Tapering windows")
-# ttt denotes travel, time, taper
-obsd_ttt = []
-gree_ttt = []
-cmt3_ttt = []
-taper_ds_cp = [] # cp = component, phase
-
-for _i, (_component, _phase) in enumerate(zip(components, phases)):
-    
-    # Taper datasets, 
-    _tds_obsd_tt, _taperds = onp.tt.taper_dataset(obsd_tt[_i], _phase, tshift, gf_shift=-20.0, return_taper=True)
-    _tds_cmt3_tt = onp.tt.taper_dataset(cmt3_tt[_i], _phase, tshift, gf_shift=-20.0)
-    _tds_gree_tt = gree_tt[_i].copy() 
-    
-    # Append to lists
-    obsd_ttt.append(_tds_obsd_tt)
-    gree_ttt.append(_tds_gree_tt)
-    cmt3_ttt.append(_tds_cmt3_tt)
-    taper_ds_cp.append(_taperds)
-
-# %%
-for _i, (_component, _phase) in enumerate(zip(components, phases)):
-    plot_misfits(obsd_ttt[_i], cmt3_ttt[_i], _component, _phase, plotdir, label='misfit_data_cmt3d_tapered')
-
-# %%
-osl.utils.log("Removing outliers")
-# fobsd, fcmt3, idx = onp.utils.remove_misfits(tds_obsd_tt, tds_cmt3_tt,
-#                                              misfit_quantile=0.975, ratio_quantile_above=0.95, ratio_quantile_below=0.1)
+# This is really doin the heavy lifting!!!!
 fobsd = []
 fcmt3 = []
 fgree = []
 ftape = []
 
-for _i, (_component, _phase) in enumerate(zip(components, phases)):
+for _component, _phase in zip(components, phases):
     
-    osl.utils.log("Removing outliers based on ratio and L2 norm misfit")
-    osl.utils.log(f"Component: {_component} -- Phase: {_phase}")
-    osl.utils.log("===================================================")
-    # # Get removed indices
-    if obsd_ttt[_i].data.shape[0] > 50:
-        _fobsd, _fcmt3, _idx = onp.utils.remove_misfits(obsd_ttt[_i], cmt3_ttt[_i], misfit_quantile_threshold=0.85, ratio_quantile_threshold_above=0.85, ratio_quantile_threshold_below=0.15)
-    else:
-        _fobsd, _fcmt3, _idx = onp.utils.remove_misfits(obsd_ttt[_i], cmt3_ttt[_i], misfit_quantile_threshold=0.9, ratio_quantile_threshold_above=0.9, ratio_quantile_threshold_below=0.1)
-
-    _fgree = gree_ttt[_i].subset(stations=_idx)
-    _ftape = taper_ds_cp[_i].subset(stations=_idx)
-    
-    
-    # append
+    _fobsd, _fcmt3, _fgree, _ftape = osl.full_preparation(ds_obsd, ds_cmt3, ds_gree, _phase, _component, cmt3, [cstf], 
+                                                          green_is_synthetic=False, plotdir=plotdir, 
+                                                          labels=['Observed', 'CMT3D+', 'Green Functions'], gf_shift=-20.0)
     fobsd.append(_fobsd)
     fcmt3.append(_fcmt3)
     fgree.append(_fgree)
     ftape.append(_ftape)
     
-    # Log reduction in traces
-    osl.utils.log(f"-----|| {obsd_ttt[_i].data.shape[0]} -> {fobsd[_i].data.shape[0]}")
-    osl.utils.log("////")
-    
 
-# %%
-# Plot section with stuff removed!
-for _i, (_component, _phase) in enumerate(zip(components, phases)):
-    osl.plot.plot_full_section([fobsd[_i], fcmt3[_i], fgree[_i]], ['Observed', 'CMT3D+', 'Green Functions'], [cstf], cmt3, 
-                            scale=2.0, limits=[0*60,60*60],component=_component, 
-                            outfile=os.path.join(plotdir, f'{_component}_{_phase}_data_cmt3d_green_tt_taper_removed_outliers.pdf'))
-
-
-    osl.plot.plot_full_section([fobsd[_i], fcmt3[_i]], ['Observed', 'CMT3D+'], [cstf], cmt3, 
-                            scale=2.0, limits=[0*60,60*60], component=_component, 
-                            outfile=os.path.join(plotdir, f'{_component}_{_phase}_data_cmt3d_removed_outliers.pdf'))
-
-# %%
-def station_inversion(i, t, d, G, tapers, config):
-    
-    inv1 = osl.Inversion(t, d, G, tapers=tapers, config=config)
-    x = osl.utils.gaussn(inv1.npknots[: -inv1.k - 1], 30, 20)
-    x = 2*x / np.sum(x)
-    inv1.optimize_smooth_bound0N(x=x)
-    
-    print(f"[{i:>03d}]: Done.")
-
-    return i, inv1
-
-def station_inversion_diff_tmax(i, t, c, d, G, tapers, config):
-    
-    inv1 = osl.Inversion(t, d, G, tapers=tapers, config=config)
-    x = osl.utils.gaussn(inv1.npknots[: -inv1.k - 1], 30, 20)
-    x = 2*x / np.sum(x)
-    inv1.optimize_smooth_bound_diff(x=c[:len(x)], x0=c[:len(x)])
-    
-    print(f"[{i:>03d}]: Done.")
-
-    return i, inv1
-
-
-def station_inversion_diff(i, t, c, d, G, tapers, config):
-    
-    inv1 = osl.Inversion(t, d, G, tapers=tapers, config=config)
-    x = osl.utils.gaussn(inv1.npknots[: -inv1.k - 1], 30, 20)
-    x = 2*x / np.sum(x)
-    inv1.optimize_smooth_bound_diff(x=c[:len(x)], x0=c[:len(x)])
-    
-    print(f"[{i:>03d}]: Done.")
-
-    return i, inv1
 
 # %%
 tmax_main = 300.0
@@ -513,7 +306,6 @@ config = dict(
     maxiter=150,
     verbose=False)
 
-# %%
 
 osl.utils.log("Constructing station-wise STFs -- 1st pass")
 fstfs_first = []
@@ -521,30 +313,7 @@ models_first_pass = []
 
 for _i, (_component, _phase) in enumerate(zip(components, phases)):
     
-    _fstfs = fgree[_i].copy()
-    _fstfs.meta.stations.attributes.tmaxs = np.zeros(len(_fstfs.meta.stations.codes), dtype=np.float32)
-    _fstfs.meta.stations.attributes.ints = np.zeros(len(_fstfs.meta.stations.codes), dtype=np.float32)
-       
-    _c = []
-    
-        
-    # Inverting with optimal Tmax
-    invs = Parallel(n_jobs=20)(delayed(station_inversion)(i, t, fobsd[_i].data[i:i+1, 0,:], fgree[_i].data[i:i+1, 0, :], ftape[_i].data[i:i+1, 0, :], config) for i in range(fobsd[_i].data.shape[0]))
-        
-    for i, _inv in enumerate(invs):
-        _, inv1 = _inv
-        f = inv1.construct_f(inv1.model)
-        Nm = inv1.model.shape[0]
-        _c.append(inv1.model.copy())
-        
-        # Integrate the value
-        _fstfs.meta.stations.attributes.ints[i] = np.trapz(f, dx=inv1.dt)
-        
-        # Defining the STF, costs, and grads
-        _fstfs.data[i, 0, :]  = f
-    
-    # Fix timing        
-    _fstfs.meta.starttime = _fstfs.meta.stations.attributes.origin_time
+    _fstfs, _c = osl.stationwise_first_pass(fobsd[_i], fgree[_i], ftape[_i], config)
     
     # Append results
     fstfs_first.append(_fstfs)
@@ -586,38 +355,17 @@ osl.utils.log("Constructing station-wise STFs -- 2nd pass")
 config['penalty_weight'] = 0.1
 config['A'] = A
 config['smooth_weight'] = 1e3
-# config['diff_weight'] = 1e5 # Sett in loop
-fstfs = []
-
-
-models_second_pass = []
 diff_weights = [1e4, 1e4]
+
+
+fstfs = []
+models_second_pass = []
+
 for _i, (_component, _phase) in enumerate(zip(components, phases)):
     
     config['diff_weight'] = diff_weights[_i]
     
-    _fstfs = fgree[_i].copy()
-    _fstfs.meta.stations.attributes.tmaxs = np.zeros(len(_fstfs.meta.stations.codes), dtype=np.float32)
-    _fstfs.meta.stations.attributes.ints = np.zeros(len(_fstfs.meta.stations.codes), dtype=np.float32)
-    
-    _c = []
-    # Inverting with optimal Tmax
-    invs = Parallel(n_jobs=20)(delayed(station_inversion_diff)(i, t, models_first_pass[_i], fobsd[_i].data[i:i+1, 0,:], fgree[_i].data[i:i+1, 0, :], ftape[_i].data[i:i+1, 0, :], config) for i in range(fobsd[_i].data.shape[0]))
-        
-    for i, _inv in enumerate(invs):
-        _, inv1 = _inv
-        f = inv1.construct_f(inv1.model)
-        Nm = inv1.model.shape[0]
-        _c.append(inv1.model.copy())
-        
-        # Integrate the value
-        _fstfs.meta.stations.attributes.ints[i] = np.trapz(f, dx=inv1.dt)
-        
-        # Defining the STF, costs, and grads
-        _fstfs.data[i, 0, :]  = f
-        
-    # Fix timing        
-    _fstfs.meta.starttime = _fstfs.meta.stations.attributes.origin_time
+    _fstfs, _c = osl.stationwise_second_pass(fobsd[_i], fgree[_i], ftape[_i], config, models_first_pass[_i])
   
     # Append results
     fstfs.append(_fstfs)
@@ -651,184 +399,15 @@ plt.close(fig)
 
 
 # %%
-# Getting the optimal Tmax
-osl.utils.log("Finding Tmax using the integrated STF and the elbow method")
-
+# Get tmax for the stations
 weights = [2/3, 1/3]
 
-# COmpute the weighted average of the stfs
-avg_stf = weights[0] * np.mean(fstfs[0].data[:,0,:], axis=0) \
-        + weights[1] * np.mean(fstfs[1].data[:,0,:], axis=0)
-      
-# Compute the normalize cumulative STF
-_total = np.trapz(avg_stf, dx=fstfs[0].meta.delta)
-_STF = cumtrapz(avg_stf/_total, dx=fstfs[0].meta.delta, initial=0)
+tmax = osl.compute_tmax(fstfs, weights, plotdir=plotdir, phases=phases, components=components,
+                        plot_intermediate_figures=True)
 
-
-_idx, _, _, long_stf = osl.utils.find_cond_elbow_idx(t, _STF)
-idx = osl.utils.find_elbow_point(fstfs[0].t[:_idx], 1-_STF[:_idx]) 
-idx += t[idx]/10/fstfs[0].meta.delta
-idx = int(idx)
-tmax = fstfs[0].t[idx]
-
-osl.utils.log(f"Inverting with optimal Tmax {_component} {_phase}: {tmax:.0f}")
-
-
-#%%
-from scipy.integrate import cumtrapz
-
-def plot_cumulative_stf(t, fstfs, components, phases, plotdir):
-    
-    plt.figure()
-    for _i, (_component, _phase) in enumerate(zip(components, phases)):
-        ax = plt.subplot(3,1,_i+1)
-        osl.plot.plot_stf_end_pick(t, fstfs[_i], label=f'{_component} {_phase}',
-                                   extension=True, label_outside=False)        
-        plt.legend(frameon=False, ncol=6, bbox_to_anchor=(0.0, 1.0), loc='lower left',
-                   borderaxespad=0., fontsize='small')
-        if _i == 2:
-            plt.xlabel('Time [s]')
-        else:
-            ax.tick_params(axis='x', which='both', labelbottom=False)
-        plt.ylim(-0.05, 1.05)
-        plt.axhline(0.0, c=(0.7,0.7,0.7), ls='-', lw=1.0, zorder=-1)
-        
-    
-    plt.subplots_adjust(hspace=0.3)
-    plt.savefig(os.path.join(plotdir, 'stf_cumulative.pdf'))
-    
-plot_cumulative_stf(fstfs[0].t, [avg_stf, np.mean(fstfs[0].data[:, 0, :], axis=0), np.mean(fstfs[1].data[:, 0, :], axis=0)], ['Combined', *components], ['S+P' , *phases], plotdir)
-plt.close('all')
-
-
-# %%
-
-# Plot the stf pick plot separately
-osl.plot.plot_stf_end_pick(fstfs[0].t, avg_stf, label='', 
-                        extension=True, label_outside=False)        
-plt.legend(frameon=False, ncol=6, bbox_to_anchor=(0.0, 1.0), loc='lower left',
-        borderaxespad=0., fontsize='small')
-if _i == 1:
-    plt.xlabel('Time [s]')
-    
-if long_stf:
-    opl.plot_label(plt.gca(), f'LSTF', fontsize='small', box=False, location=18, dist=0.0)
-    
-plt.ylim(-0.05, 1.05)
-plt.axhline(0.0, c=(0.7,0.7,0.7), ls='-', lw=1.0, zorder=-1)
-plt.savefig(os.path.join(plotdir, 'stf_cumulative_choice.pdf'))
-plt.close('all')
-
-# %%
-
-osl.plot.plot_elbow_point_selection(fstfs[0].t, avg_stf, label=f'', 
-                        extension=True, label_outside=False)    
-
-plt.savefig(os.path.join(plotdir, 'stf_cumulative_choice_elbow.pdf'))
-plt.close('all')
 # %%
 
 osl.utils.log("Constructing station-wise STFs -- 3rd pass with tmax")
-
-
-
-def station_inversion_diff_tmax_bu(i, t, c, d, G, tapers, config, tmax, stf):
-    
-    # Get unique tmax
-    from scipy.integrate import cumtrapz
-    STF = cumtrapz(stf, dx=t[1]-t[0], initial=0)
-    
-    # Clip min and clip max
-    clipmin = np.maximum(10, tmax-25)
-    clipmax = np.minimum(300, tmax+50)
-    
-    # Somtimes finding new tmax fails then simply use the old one
-    try:
-        # Very relaxed thresholds
-        _tmax = osl.utils.find_tmax(t, STF, A_exp_thresh=3.0, A_log_thresh=5.0, B_exp_thresh=-10, B_log_thresh=-10,
-                                    extra_long=True)[0]
-    except RuntimeError:
-        _tmax = False
-        
-    # Making sure that the tmax is within the clipmin and clipmax and tmax if not found
-    if not _tmax:
-        __tmax = tmax
-    else:
-        if _tmax < clipmin or _tmax > clipmax:
-            __tmax = tmax
-        else:
-            __tmax = _tmax
-        
-    
-    # Actual inversion
-    config = deepcopy(config)
-    config['Tmax'] = __tmax
-    inv1 = osl.Inversion(t, d, G, tapers=tapers, config=config)
-    x = osl.utils.gaussn(inv1.npknots[: -inv1.k - 1], 30, 20)
-    x = 2*x / np.sum(x)
-    x0 = c[:len(x)]
-    x0[-1] = 0 # Setting the last value to zero to mak sure bound and diff penalties aren't interfering
-    inv1.optimize_smooth_bound_diff(x=c[:len(x)], x0=x0)
-    
-    
-    print(f"[{i:>03d}]: Done. Tmax: {tmax:.0f} -- station tmax: {_tmax} --clip--> {__tmax:.0f}")
-
-    return i, inv1, __tmax
-
-
-def station_inversion_diff_tmax(i, t, c, d, G, tapers, config, tmax, stf):
-    
-    # Get unique tmax
-    from scipy.integrate import cumtrapz
-    STF = cumtrapz(stf, dx=t[1]-t[0], initial=0)
-    
-    # Clip min and clip max
-    clipmin = np.maximum(10, tmax-25)
-    clipmax = np.minimum(300, tmax+25)
-    idxmin = np.maximum(0,np.argmin( np.abs( t - (tmax-25))))
-    idxmax = np.argmin( np.abs( t - (tmax+50)))
-    
-    clipped = False
-
-    # Somtimes finding new tmax fails then simply use the old one
-    try:
-        # Very relaxed thresholds
-        idx = osl.utils.find_elbow_point(t[idxmin:idxmax], STF[idxmin:idxmax]) + idxmin
-        
-        idx = int(idx)
-        _tmax = t[idx]
-                
-        # _tmax = osl.utils.find_tmax(t, STF, A_exp_thresh=3.0, A_log_thresh=5.0, B_exp_thresh=-10, B_log_thresh=-10,
-        #                             extra_long=True)[0]
-    except RuntimeError:
-        _tmax = False
-        
-    # Making sure that the tmax is within the clipmin and clipmax and tmax if not found
-    if not _tmax:
-        __tmax = tmax
-    else:
-        if _tmax < clipmin or _tmax > clipmax:
-            clipped = True
-            __tmax = tmax
-        else:
-            __tmax = _tmax
-        
-    
-    # Actual inversion
-    config = deepcopy(config)
-    config['Tmax'] = __tmax
-    inv1 = osl.Inversion(t, d, G, tapers=tapers, config=config)
-    x = osl.utils.gaussn(inv1.npknots[: -inv1.k - 1], 30, 20)
-    x = 2*x / np.sum(x)
-    x0 = c[:len(x)]
-    x0[-1] = 0 # Setting the last value to zero to mak sure bound and diff penalties aren't interfering
-    inv1.optimize_smooth_bound_diff(x=c[:len(x)], x0=x0)
-    
-    
-    print(f"[{i:>03d}]: Done. Tmax: {tmax:.0f} -- station tmax: {_tmax} --clip--> {__tmax:.0f}")
-
-    return i, inv1, __tmax, clipped
-
 
 # Here adding 25 sceonds to the STF to account for station by station STF variability
 config = dict(
@@ -840,41 +419,17 @@ config = dict(
     # diff_weight=1e1, #5000.0 Set during Loop
     maxiter=200,
     verbose=False)
+diff_weights = [1e3, 1e3]
+
 
 fstfs_tmax = []
-tmaxs = []
 models_third_pass = []
-diff_weights = [1e3, 1e3]
+
 for _i, (_component, _phase) in enumerate(zip(components, phases)):
     
     config['diff_weight'] = diff_weights[_i]
     
-    _fstfs_tmax = fgree[_i].copy()
-    _fstfs_tmax.meta.stations.attributes.tmaxs = np.zeros(len(_fstfs_tmax.meta.stations.codes), dtype=np.float32)
-    _fstfs_tmax.meta.stations.attributes.ints = np.zeros(len(_fstfs_tmax.meta.stations.codes), dtype=np.float32)
-    _fstfs_tmax.meta.stations.attributes.clipped = np.zeros(len(_fstfs_tmax.meta.stations.codes), dtype=int)
-    
-    # Inverting with optimal Tmax
-    invs = Parallel(n_jobs=20)(delayed(station_inversion_diff_tmax)(i, t, models_second_pass[_i], fobsd[_i].data[i:i+1, 0,:], fgree[_i].data[i:i+1, 0, :], ftape[_i].data[i:i+1, 0, :], config, tmax, fstfs[_i].data[i,0,:]) for i in range(fobsd[_i].data.shape[0]))
-        
-    _c = []
-    for i, _inv in enumerate(invs):
-        _, inv1, _tmax, _clipped = _inv
-        f = inv1.construct_f(inv1.model)
-        Nm = inv1.model.shape[0]
-        _c.append(inv1.model.copy())
-        
-        # Integrate the value
-        _fstfs_tmax.meta.stations.attributes.ints[i] = np.trapz(f, dx=inv1.dt)
-        
-        # Defining the STF, costs, and grads
-        _fstfs_tmax.data[i, 0, :]  = f
-        _fstfs_tmax.meta.stations.attributes.tmaxs[i] = _tmax
-        _fstfs_tmax.meta.stations.attributes.clipped[i] = int(_clipped)
-        
-    # Fix timing        
-    _fstfs_tmax.meta.starttime = _fstfs_tmax.meta.stations.attributes.origin_time
-  
+    _fstfs_tmax, _c = osl.stationwise_third_pass(fobsd[_i], fgree[_i], ftape[_i], config, models_second_pass[_i], tmax, fstfs[_i])
     # Append results
     fstfs_tmax.append(_fstfs_tmax)
     
@@ -882,6 +437,9 @@ for _i, (_component, _phase) in enumerate(zip(components, phases)):
     Nm_max = np.max([_c[_i].shape[0] for _i in range(len(_c))])
     _c = [np.pad(_c[_i], (0, Nm_max - _c[_i].shape[0]), mode='constant') for _i in range(len(_c))]
     models_third_pass.append(np.sqrt(np.mean(np.vstack(_c)**2, axis=0)))
+
+
+# %%
 
 # Compute average of P and S median and means
 A_tmaxP = np.median(fstfs_tmax[0].meta.stations.attributes.ints)
@@ -1074,60 +632,63 @@ plt.close()
 # %%
 # Plotting the data 
 misfits_phase = []
+fscar = []
+fbstf = []
 
 for _i, (_component, _phase) in enumerate(zip(components, phases)):
     # Create two new datasets
-    fscar = fgree[_i].copy()
-    fbstf = fgree[_i].copy()
+    _fscar = fgree[_i].copy()
+    _fbstf = fgree[_i].copy()
 
     # Convolve the Green functions with the optimal STF
-    fscar.convolve(scardec.f/cmt3.M0, 0)
+    _fscar.convolve(scardec.f/cmt3.M0, 0)
     # fbstf.convolve(pcstfs[_i].f/cmt3.M0, 0)
-    fbstf.convolve(combstf.f/cmt3.M0, 0)
+    _fbstf.convolve(combstf.f/cmt3.M0, 0)
 
     # Taper datasets
-    fscar  = onp.tt.taper_dataset(fscar, _phase, tshift, gf_shift=-20.0)
-    fbstf  = onp.tt.taper_dataset(fbstf, _phase, tshift, gf_shift=-20.0)
+    _fscar  = onp.tt.taper_dataset(_fscar, _phase, tshift, gf_shift=-20.0)
+    _fbstf  = onp.tt.taper_dataset(_fbstf, _phase, tshift, gf_shift=-20.0)
+    
+    fscar.append(_fscar)
+    fbstf.append(_fbstf)
     
     # make some measurements
     # onp.utils.window_measurements(fobsd[_i], fbstf, phase=_phase)
 
     # Compute combined misfit
-    m_scardec = onp.utils.L2(fobsd[_i], fscar, normalize=True)
-    m_bstf = onp.utils.L2(fobsd[_i], fbstf, normalize=True)
+    m_scardec = onp.utils.L2(fobsd[_i], _fscar, normalize=True)
+    m_bstf = onp.utils.L2(fobsd[_i], _fbstf, normalize=True)
         
     misfits_phase.append([m_scardec, m_bstf])    
 
-    osl.plot.plot_full_section([fobsd[_i], fscar, fbstf], ['Observed', 'SCARDEC', 'B-STF'], [scardec, combstf], cmt3, 
+    osl.plot.plot_full_section([fobsd[_i], _fscar, _fbstf], ['Observed', 'SCARDEC', 'B-STF'], [scardec, combstf], cmt3, 
                            scale=5.0, limits=[0*60,60*60], component=_component, 
                            outfile=os.path.join(plotdir, f'{_component}_{_phase}_data_scardec_bstf.pdf'))
-
-
-
+    
 # %%
 
-for _i, (_component, _phase) in enumerate(zip(components, phases)):
-    # Create two new datasets
-    fscar = fgree[_i].copy()
-    fbstf = fgree[_i].copy()
+# for _i, (_component, _phase) in enumerate(zip(components, phases)):
+#     # Create two new datasets
+#     fscar = fgree[_i].copy()
+#     fbstf = fgree[_i].copy()
 
-    # Convolve the Green functions with the optimal STF
-    fscar.convolve(scardec.f/cmt3.M0, 0)
-    # fbstf.convolve(pcstfs[_i].f/cmt3.M0, 0)
+#     # Convolve the Green functions with the optimal STF
+#     fscar.convolve(scardec.f/cmt3.M0, 0)
+#     # fbstf.convolve(pcstfs[_i].f/cmt3.M0, 0)
     
-    for _j in range(fstfs[_i].data.shape[0]):
-        _stf = osl.STF(t=t, f=fstfs[_i].data[_j,]*cmt3.M0, tshift=0, origin=cmt3.origin_time, label='B-STF')
-        _stf.M0 = np.trapz(pcstf.f, pcstf.t)
+#     for _j in range(fstfs[_i].data.shape[0]):
+#         _stf = osl.STF(t=t, f=fstfs[_i].data[_j,]*cmt3.M0, tshift=0, origin=cmt3.origin_time, label='B-STF')
+#         _stf.M0 = np.trapz(pcstf.f, pcstf.t)
     
-        fbstf.convolve_trace(_j, _stf.f/cmt3.M0, 0)
+#         fbstf.convolve_trace(_j, _stf.f/cmt3.M0, 0)
 
-    # Taper datasets
-    fscar  = onp.tt.taper_dataset(fscar, _phase, tshift, gf_shift=-20.0)
-    fbstf  = onp.tt.taper_dataset(fbstf, _phase, tshift, gf_shift=-20.0)
+#     # Taper datasets
+#     fscar  = onp.tt.taper_dataset(fscar, _phase, tshift, gf_shift=-20.0)
+#     fbstf  = onp.tt.taper_dataset(fbstf, _phase, tshift, gf_shift=-20.0)
 
-    osl.plot.plot_full_section([fobsd[_i], fscar, fbstf], ['Observed', 'SCARDEC', 'B-STF'], [scardec, combstf], cmt3, 
-                           scale=5.0, limits=[0*60,60*60], component=_component, 
-                           outfile=os.path.join(plotdir, f'{_component}_{_phase}_data_scardec_bstf_tracewise.pdf'))
+#     osl.plot.plot_full_section([fobsd[_i], fscar, fbstf], ['Observed', 'SCARDEC', 'B-STF'], [scardec, combstf], cmt3, 
+#                            scale=5.0, limits=[0*60,60*60], component=_component, 
+#                            outfile=os.path.join(plotdir, f'{_component}_{_phase}_data_scardec_bstf_tracewise.pdf'))
 
 # %% 
 # Plot panel for the misfit functions
@@ -1165,6 +726,542 @@ osl.plot.plot_summary(combstf, fstfs, fstfs_tmax, pcstfs, gcmt_stf, scardec,
 plt.savefig(os.path.join(plotdir, 'stf_summary.pdf'))
 
 plt.close('all')
+
+
+#%%
+#
+
+osl.utils.log("Selecting windows for surface wave measurements")
+# Band pass filter for the long preiod comparison
+bp = [1/250, 1/100]
+
+fobsd_surface = []
+fcmt3_surface = []
+fscar_surface = []
+fbstf_surface = []
+
+surface_components = ['Z', 'T']
+surface_phases = ['Rayleigh', 'Love']
+
+# Plot fit between observed and CMT3D+ and Green functiions convolved with the STF
+combstf = osl.STF(t=t, f=cinv.construct_f(cinv.model)*cmt3.M0, tshift=0, origin=cmt3.origin_time, label='CSTF')
+combstf.M0 = np.trapz(combstf.f, combstf.t)
+
+# Convolve the green function with the 
+bstf_synt = ds_gree.copy()
+bstf_synt.convolve(combstf.f/cmt3.M0, 0)
+
+# Convolve the green function with the 
+scar_synt = ds_gree.copy()
+scar_synt.convolve(scardec.f/cmt3.M0, 0)
+
+
+for _i, (_component, _phase) in enumerate(zip(surface_components, surface_phases)):
+    
+    _fobsd_surface, _fbstf_surface, _fcmt3_surface, _ =  osl.full_preparation(ds_obsd, bstf_synt, ds_cmt3,  _phase, _component, cmt3, [cstf, combstf],
+                                                                                           green_is_synthetic=True, plotdir=plotdir, snr=False, plot_intermediate_figures=True,
+                                                                                           labels=['Observed', 'B-STF', 'CMT3D+'], gf_shift=-20.0, bp=bp
+                                                                                           )
+
+    fobsd_surface.append(_fobsd_surface)
+    fcmt3_surface.append(_fcmt3_surface)
+    fbstf_surface.append(_fbstf_surface)
+    
+    osl.plot.plot_full_section([_fobsd_surface, _fcmt3_surface, _fbstf_surface], ['Observed', 'CMT3D+', 'B-STF'], [scardec, combstf], cmt3, 
+                           scale=2.5, limits=[0*60,60*60], component=_component, 
+                           outfile=os.path.join(plotdir, f'{_component}_{_phase}_data_cmt3_bstf.pdf'))
+    
+    
+    # Make comparison between observed, SCARDEC and BSTF
+    _fobsd_surface, _fbstf_surface, _fscardec_surface, _ =  osl.full_preparation(ds_obsd, bstf_synt, scar_synt, _phase, _component, cmt3, [scardec, combstf],
+                                                                                           green_is_synthetic=True, plotdir=plotdir, snr=False, plot_intermediate_figures=False,
+                                                                                           labels=['Observed', 'B-STF', 'SCARDEC'], gf_shift=-20.0, bp=bp
+                                                                                           )
+
+    
+    fscar_surface.append(_fscardec_surface)
+    
+    osl.plot.plot_full_section([_fobsd_surface, _fscardec_surface, _fbstf_surface], ['Observed', 'SCARDEC', 'B-STF'], [scardec, combstf], cmt3, 
+                                scale=2.5, limits=[0*60,60*60], component=_component, 
+                                outfile=os.path.join(plotdir, f'{_component}_{_phase}_data_scardec_bstf.pdf'))
+
+# %%
+# Create measurements and plot associated histograms.
+
+measurements = dict()
+wavetypes = ['body', 'surface']
+misfitlabels = ['CMT3D+', 'SCARDEC', 'B-STF']
+misfitcolors = ['k', 'tab:red', 'tab:blue']
+bodysynths = [fcmt3, fscar, fbstf]
+surfsynths = [fcmt3_surface, fscar_surface, fbstf_surface]
+
+for _i, (_component, _phase) in enumerate(zip(components, phases)):
+    # Add phase and component labels
+    pc = f"{_component}_{_phase}"
+    
+    measurements[pc] = dict()
+    # Compute misfits between observed and CMT3D+ and BSTF
+    for _j, (_ml, _synth) in enumerate(zip(misfitlabels, bodysynths)):
+        
+        measurements[pc][_ml] = onp.utils.window_measurements(fobsd[_i], _synth[_i], phase=_phase, dict_only=True)
+
+
+for _i, (_component, _phase) in enumerate(zip(surface_components, surface_phases)):
+    # Add phase and component labels
+    pc = f"{_component}_{_phase}"
+    
+    measurements[pc] = dict()
+    # Compute misfits between observed and CMT3D+ and BSTF
+    for _j, (_ml, _synth) in enumerate(zip(misfitlabels, surfsynths)):
+        
+        measurements[pc][_ml] = onp.utils.window_measurements(fobsd_surface[_i], _synth[_i], phase=_phase, dict_only=True)
+
+phasecomp_order = [
+    "Z_Ptrain",
+    "T_Strain",
+    "Z_Rayleigh",
+    "T_Love"
+]
+
+# %%
+# outfile = os.path.join(plotdir, 'measurements_histograms.pdf')
+# osl.plot.plot_measurements_histograms(measurements, phasecomp_order, misfitlabels, misfitcolors, outfile)
+
+# %%
+onp.utils.save_json(measurements, os.path.join(datadir, 'measurements.json'))
+
+# %%
+# Compute the correlation ratio between the observed and the CMT3D+ and the BSTF
+for _i, (_component, _phase) in enumerate(zip(surface_components, surface_phases)):
+    onp.utils.window_measurements(fobsd_surface[_i], fbstf_surface[_i], phase=_phase)
+    
+ZR_amp = np.median(fobsd_surface[0].meta.stations.attributes.measurements.corr_ratio)
+TL_amp = np.median(fobsd_surface[1].meta.stations.attributes.measurements.corr_ratio)
+S_amp = np.array([ZR_amp, TL_amp])
+
+scalar_moment_fix = np.sum(S_amp)/2
+
+osl.utils.log(f"Average Correlation Ratio: {scalar_moment_fix:0.4f}")
+osl.utils.log(f"Average Correlation Ratio ZR: {ZR_amp:0.4f}")
+osl.utils.log(f"Average Correlation Ratio TL: {TL_amp:0.4f}")
+# Average ratio of maximum amplitudes
+pavgratio = np.abs(fobsd_surface[0].data[:,0,:]).max(axis=1).mean() / np.abs(fbstf_surface[0].data[:,0,:]).max(axis=1).mean()
+savgratio = np.abs(fobsd_surface[1].data[:,0,:]).max(axis=1).mean() / np.abs(fbstf_surface[1].data[:,0,:]).max(axis=1).mean()
+
+osl.utils.log(f"Average Ratio of Maximum Amplitudes: {pavgratio:0.4f}")
+osl.utils.log(f"Average Ratio of Maximum Amplitudes: {savgratio:0.4f}")
+
+# %%
+# Redo STF optimal inversion with fixed amplitude
+# Integral value of the STF
+A_FIX = np.trapz(combstf.f/cmt3.M0,t)*scalar_moment_fix
+
+
+# %%
+
+osl.utils.log("Constructing station-wise STFs with the surface wave amplitude fix")
+
+# Here adding 25 sceonds to the STF to account for station by station STF variability
+config = dict(
+    Tmin=0, Tmax=tmax, knots_per_second=1.0,
+    A=A_FIX,
+    penalty_weight=100.0, # 1.0, # 100.0
+    smooth_weight=1e2, #.5,
+    bound_weight=100.0,
+    # diff_weight=1e1, #5000.0 Set during Loop
+    maxiter=200,
+    verbose=False)
+diff_weights = [1e3, 1e3]
+
+
+fstfs_tmax = []
+models_third_pass = []
+
+for _i, (_component, _phase) in enumerate(zip(components, phases)):
+    
+    config['diff_weight'] = diff_weights[_i]
+    
+    _fstfs_tmax, _c = osl.stationwise_third_pass(fobsd[_i], fgree[_i], ftape[_i], config, models_second_pass[_i], tmax, fstfs[_i])
+    # Append results
+    fstfs_tmax.append(_fstfs_tmax)
+    
+    # Pad models without many parameters
+    Nm_max = np.max([_c[_i].shape[0] for _i in range(len(_c))])
+    _c = [np.pad(_c[_i], (0, Nm_max - _c[_i].shape[0]), mode='constant') for _i in range(len(_c))]
+    models_third_pass.append(np.sqrt(np.mean(np.vstack(_c)**2, axis=0)))
+
+# %%
+
+if tmax < 30.0:
+    config = dict(
+        Tmin=0, Tmax=tmax, knots_per_second=1.0,
+        A=A_FIX,
+        penalty_weight=10.0, #1.0, # 1.0, # 100.0
+        smooth_weight=1e1, #1e2, #.5,
+        bound_weight=1.0,
+        diff_weight=1e1, #5000.0
+        maxiter=200,
+        verbose=False)
+
+elif tmax < 40.0:
+    
+    config = dict(
+        Tmin=0, Tmax=tmax, knots_per_second=1.0,
+        A=A_FIX,
+        penalty_weight=10.0, #1.0, # 1.0, # 100.0
+        smooth_weight=1e2, #1e2, #.5,
+        bound_weight=1.0,
+        diff_weight=1e1, #5000.0
+        maxiter=200,
+        verbose=False)
+
+else:
+    config = dict(
+        Tmin=0, Tmax=tmax , knots_per_second=1.0,
+        A=A_FIX,
+        penalty_weight=10.0, #1.0, # 1.0, # 100.0
+        smooth_weight=1e2, #1e2, #.5,
+        bound_weight=10.0,
+        diff_weight=1e3, #5000.0
+        maxiter=200,
+        verbose=False)
+
+
+invs = []
+
+if fobsd[1].data.shape[0] < 10: 
+    config['penalty_weight'] = 0.5
+
+for _i, (_component, _phase) in enumerate(zip(components, phases)):
+    
+    # osl.utils.find_tmax()
+    azimuthalweights = osl.utils.compute_azimuthal_weights(fobsd[_i].meta.stations.azimuths)
+    
+    _inv = osl.Inversion(fobsd[_i].t, fobsd[_i].data[:,0,:], fgree[_i].data[:,0,:], config=config, tapers=ftape[_i].data[:,0,:],
+                         azimuthalweights=azimuthalweights)
+    x = osl.utils.gaussn(_inv.npknots[: -_inv.k - 1], 30, 20)
+    x = 2*x / np.sum(x)
+    
+    x0 = models_third_pass[_i][:len(x)]
+    if len(models_third_pass[_i]) < len(x):
+        x0 = np.pad(x0, (0, len(x) - len(x0)), mode='constant', constant_values=0)
+    else:
+        x0 = x0[:len(x)]
+        
+    _inv.optimize_smooth_bound_diff(x=x, x0=x0)
+    
+    # _inv.optimize_smooth_bound0N(x=x)
+    _inv.print_results()
+    
+    invs.append(_inv)
+
+# %%
+
+# Combined inversion
+# config.update(dict(smooth_weight=0))
+
+cinvs= []
+
+for _i, (_component, _phase) in enumerate(zip(components, phases)):
+    azimuthalweights = osl.utils.compute_azimuthal_weights(fobsd[_i].meta.stations.azimuths)
+    _inv = osl.Inversion(fobsd[_i].t, fobsd[_i].data[:,0,:], fgree[_i].data[:,0,:], config=config, tapers=ftape[_i].data[:,0,:],
+                         azimuthalweights=azimuthalweights)
+    cinvs.append(_inv)
+    
+cinv = osl.CombinedInversion(cinvs, weights)
+
+_model = weights[0] * models_second_pass[0] + weights[1] * models_second_pass[1]
+_model = _model[:len(x)]
+_model[-1] = 0.0
+_model[0] = 0.0
+
+x = osl.utils.gaussn(_inv.npknots[: -cinv.k - 1], 30, 20)
+x = 2*x / np.sum(x)
+
+if len(_model) < len(x):
+    x0 = np.pad(_model, (0, len(x) - len(_model)), mode='constant', constant_values=0)
+else:
+    x0 = _model[:len(x)]
+    
+   
+
+cinv.optimize_diff(x=_model, x0=x0)# 
+# cinv.optimize(x=_model[:len(x)])
+cinv.print_results()
+
+
+# %%
+# Now we want to compute the misfit reduction between the CMT3D+ and B-STF and the SCARDEC STF
+
+scardec = osl.STF.scardecdir(scardec_stf_dir, stftype="optimal")
+scardec.interp(t, origin=cmt3.origin_time, tshift=0)
+scardec.f = scardec.f * 1e7
+scardec.M0 *= 1e7
+
+plt.figure(figsize=(6, 2.5))
+combstf = osl.STF(t=t, f=cinv.construct_f(cinv.model)*cmt3.M0, tshift=0, origin=cmt3.origin_time, label='CSTF')
+combstf.M0 = np.trapz(combstf.f, combstf.t)
+combstf.plot(normalize=cstf.M0, lw=1.0, c='tab:blue', label=f'CSTF')
+pcstfs = []
+colors = ['tab:orange', 'tab:green']
+for _i, (_component, _phase) in enumerate(zip(components, phases)):
+    pcstf = osl.STF(t=t, f=invs[_i].construct_f(invs[_i].model)*cmt3.M0, tshift=0, origin=cmt3.origin_time, label='B-STF')
+    pcstf.M0 = np.trapz(pcstf.f, pcstf.t)
+    pcstfs.append(pcstf)
+    pcstfs[_i].plot(normalize=cstf.M0, lw=0.5, c=colors[_i], label=f'{_component}/{_phase}')
+scardec.plot(normalize=cstf.M0, lw=1.0, c='tab:red', label='SCARDEC')
+plt.xlim(0, 300)
+plt.legend()
+plt.savefig(os.path.join(plotdir, 'bstf_vs_scardec_stf_fix.pdf'))
+plt.close()
+
+# # plot spectrum optimal STF
+# def spectrum(combstf):
+#     t = combstf.t
+#     dt = t[1] - t[0]
+#     Fs = 1 / dt  # sampling frequency
+    
+#     ps = np.abs(np.fft.fft(combstf.f))**2
+#     freqs = np.fft.fftfreq(len(ps), dt)
+#     idx = np.argsort(freqs)
+#     plt.figure()
+#     ax = plt.axes()
+#     plt.plot(freqs[idx], ps[idx])
+#     plt.xlim(0,0.2)
+#     xt = ax.get_xticks()
+#     plt.xticks(xt, [f"{1/_x:.2f}" if _x != 0 else '' for _x in xt ])
+    
+#     plt.savefig('test.pdf')
+
+# spectrum(combstf)
+
+
+# %%
+# Plotting the data 
+misfits_phase = []
+fscar = []
+fbstf = []
+
+for _i, (_component, _phase) in enumerate(zip(components, phases)):
+    # Create two new datasets
+    _fscar = fgree[_i].copy()
+    _fbstf = fgree[_i].copy()
+
+    # Convolve the Green functions with the optimal STF
+    _fscar.convolve(scardec.f/cmt3.M0, 0)
+    # fbstf.convolve(pcstfs[_i].f/cmt3.M0, 0)
+    _fbstf.convolve(combstf.f/cmt3.M0, 0)
+
+    # Taper datasets
+    _fscar  = onp.tt.taper_dataset(_fscar, _phase, tshift, gf_shift=-20.0)
+    _fbstf  = onp.tt.taper_dataset(_fbstf, _phase, tshift, gf_shift=-20.0)
+    
+    fscar.append(_fscar)
+    fbstf.append(_fbstf)
+    
+    # make some measurements
+    # onp.utils.window_measurements(fobsd[_i], fbstf, phase=_phase)
+
+    # Compute combined misfit
+    m_scardec = onp.utils.L2(fobsd[_i], _fscar, normalize=True)
+    m_bstf = onp.utils.L2(fobsd[_i], _fbstf, normalize=True)
+        
+    misfits_phase.append([m_scardec, m_bstf])    
+
+    osl.plot.plot_full_section([fobsd[_i], _fscar, _fbstf], ['Observed', 'SCARDEC', 'B-STF'], [scardec, combstf], cmt3, 
+                           scale=5.0, limits=[0*60,60*60], component=_component, 
+                           outfile=os.path.join(plotdir, f'{_component}_{_phase}_data_scardec_bstf_fix.pdf'))
+
+
+# %%
+for _i, (_component, _phase) in enumerate(zip(components, phases)):
+    if scardec_id == 'FCTs_20070815_234057_NEAR_COAST_OF_PERU' and _i == 0:
+        
+        osl.plot.plot_sub_section([fobsd[_i], fscar[_i], fbstf[_i]], ['Observed', 'SCARDEC', 'B-STF'], [scardec, combstf], cmt3, 
+                                  stf_scale=cmt3.M0, scale=5.0, limits=[12.5*60,27.5*60], component=_component, 
+                                  outfile=os.path.join(plotdir, f'{_component}_{_phase}_data_scardec_bstf_sub_fix.pdf'))
+    
+# %%
+
+# # %%
+# for _i, (_component, _phase) in enumerate(zip(components, phases)):
+#     # Create two new datasets
+#     fscar = fgree[_i].copy()
+#     fbstf = fgree[_i].copy()
+
+#     # Convolve the Green functions with the optimal STF
+#     fscar.convolve(scardec.f/cmt3.M0, 0)
+#     # fbstf.convolve(pcstfs[_i].f/cmt3.M0, 0)
+    
+#     for _j in range(fstfs[_i].data.shape[0]):
+#         _stf = osl.STF(t=t, f=fstfs[_i].data[_j,]*cmt3.M0, tshift=0, origin=cmt3.origin_time, label='B-STF')
+#         _stf.M0 = np.trapz(pcstf.f, pcstf.t)
+    
+#         fbstf.convolve_trace(_j, _stf.f/cmt3.M0, 0)
+
+#     # Taper datasets
+#     fscar  = onp.tt.taper_dataset(fscar, _phase, tshift, gf_shift=-20.0)
+#     fbstf  = onp.tt.taper_dataset(fbstf, _phase, tshift, gf_shift=-20.0)
+
+#     osl.plot.plot_full_section([fobsd[_i], fscar, fbstf], ['Observed', 'SCARDEC', 'B-STF'], [scardec, combstf], cmt3, 
+#                            scale=5.0, limits=[0*60,60*60], component=_component, 
+#                            outfile=os.path.join(plotdir, f'{_component}_{_phase}_data_scardec_bstf_tracewis_fix.pdf'))
+
+# # %%
+# osl.plot.plot_circular_STF(fstfs[0])
+
+# %% 
+# Plot panel for the misfit functions
+fm_scardec = CMTSOLUTION.from_sdr(
+        s=scardec.strike1,
+        d=scardec.dip1,
+        r=scardec.rake1,
+        M0=scardec.M0,  # Convert to dyn*cm
+        latitude=scardec.latitude,
+        longitude=scardec.longitude,
+        depth=scardec.depth,
+    )
+
+gcmt_stf = osl.STF.triangle(
+    origin=cmt3_stf.origin_time, t=t, tc=cmt3_stf.time_shift,
+    tshift=tshift, hdur=cmt3_stf.hdur, M0=cmt3.M0)
+
+
+# %%
+
+if 'sumatra' in scardec_id.lower() or 'java' in scardec_id.lower():
+    nocoast = True
+else:
+    nocoast = False
+
+osl.plot.plot_summary(combstf, fstfs, fstfs_tmax, pcstfs, gcmt_stf, scardec,
+                      gcmt, cmt3_stf, fm_scardec,
+                      knots_per_second,
+                      limits=(0, 225),
+                      nocoast=nocoast,
+                      region=region, 
+                      misfits=misfits_phase)
+
+
+plt.savefig(os.path.join(plotdir, 'stf_summary_fix.pdf'))
+
+plt.close('all')
+
+# %%
+osl.utils.log("Selecting windows for surface wave measurements")
+fobsd_surface = []
+fcmt3_surface = []
+fscar_surface = []
+fbstf_surface = []
+
+surface_components = ['Z', 'T']
+surface_phases = ['Rayleigh', 'Love']
+
+# Plot fit between observed and CMT3D+ and Green functiions convolved with the STF
+combstf = osl.STF(t=t, f=cinv.construct_f(cinv.model)*cmt3.M0, tshift=0, origin=cmt3.origin_time, label='CSTF')
+combstf.M0 = np.trapz(combstf.f, combstf.t)
+
+# Convolve the green function with the 
+bstf_synt = ds_gree.copy()
+bstf_synt.convolve(combstf.f/cmt3.M0, 0)
+
+# Convolve the green function with the 
+scar_synt = ds_gree.copy()
+scar_synt.convolve(scardec.f/cmt3.M0, 0)
+
+
+for _i, (_component, _phase) in enumerate(zip(surface_components, surface_phases)):
+    
+    _fobsd_surface, _fbstf_surface, _fcmt3_surface, _ =  osl.full_preparation(ds_obsd, bstf_synt, ds_cmt3,  _phase, _component, cmt3, [cstf, combstf],
+                                                                                           green_is_synthetic=True, plotdir=plotdir, snr=False, plot_intermediate_figures=False,
+                                                                                           labels=['Observed', 'B-STF', 'CMT3D+'], gf_shift=-20.0, bp=bp
+                                                                                           )
+
+    fobsd_surface.append(_fobsd_surface)
+    fcmt3_surface.append(_fcmt3_surface)
+    fbstf_surface.append(_fbstf_surface)
+    
+    osl.plot.plot_full_section([_fobsd_surface, _fcmt3_surface, _fbstf_surface], ['Observed', 'CMT3D+', 'B-STF'], [scardec, combstf], cmt3, 
+                           scale=2.5, limits=[0*60,60*60], component=_component, 
+                           outfile=os.path.join(plotdir, f'{_component}_{_phase}_data_cmt3_bstf_fix.pdf'))
+    
+    
+    # Make comparison between observed, SCARDEC and BSTF
+    _fobsd_surface, _fbstf_surface, _fscardec_surface, _ =  osl.full_preparation(ds_obsd, bstf_synt, scar_synt, _phase, _component, cmt3, [scardec, combstf],
+                                                                                           green_is_synthetic=True, plotdir=plotdir, snr=False, plot_intermediate_figures=False,
+                                                                                           labels=['Observed', 'B-STF', 'SCARDEC'], gf_shift=-20.0, bp=bp
+                                                                                           )
+
+    
+    fscar_surface.append(_fscardec_surface)
+    
+    osl.plot.plot_full_section([_fobsd_surface, _fscardec_surface, _fbstf_surface], ['Observed', 'SCARDEC', 'B-STF'], [scardec, combstf], cmt3, 
+                                scale=2.5, limits=[0*60,60*60], component=_component, 
+                                outfile=os.path.join(plotdir, f'{_component}_{_phase}_data_scardec_bstf_fix.pdf'))
+
+# %%
+# Compute and plot measurements
+
+measurements_fix = dict()
+wavetypes = ['body', 'surface']
+misfitlabels = ['CMT3D+', 'SCARDEC', 'B-STF']
+misfitcolors = ['k', 'tab:red', 'tab:blue']
+bodysynths = [fcmt3, fscar, fbstf]
+surfsynths = [fcmt3_surface, fscar_surface, fbstf_surface]
+
+for _i, (_component, _phase) in enumerate(zip(components, phases)):
+    # Add phase and component labels
+    pc = f"{_component}_{_phase}"
+    
+    measurements_fix[pc] = dict()
+    # Compute misfits between observed and CMT3D+ and BSTF
+    for _j, (_ml, _synth) in enumerate(zip(misfitlabels, bodysynths)):
+        
+        measurements_fix[pc][_ml] = onp.utils.window_measurements(fobsd[_i], _synth[_i], phase=_phase, dict_only=True)
+
+
+for _i, (_component, _phase) in enumerate(zip(surface_components, surface_phases)):
+    # Add phase and component labels
+    pc = f"{_component}_{_phase}"
+    
+    measurements_fix[pc] = dict()
+    # Compute misfits between observed and CMT3D+ and BSTF
+    for _j, (_ml, _synth) in enumerate(zip(misfitlabels, surfsynths)):
+        
+        measurements_fix[pc][_ml] = onp.utils.window_measurements(fobsd_surface[_i], _synth[_i], phase=_phase, dict_only=True)
+
+
+# %%
+# Now add the misfits from for _phase_label in measurements_fix.keys():
+measurements_comb = deepcopy(measurements_fix)
+
+for _phase_label in measurements_comb.keys():    
+    measurements_comb[_phase_label]["B-STF-B"] = measurements[_phase_label]["B-STF"]
+
+
+# %%
+wavetypes = ['body', 'surface']
+misfitlabels = ['CMT3D+', 'SCARDEC', 'B-STF', 'B-STF-B']
+misfitcolors = ['k', 'tab:red', 'tab:blue', 'tab:blue']
+misfitlinestyles = ['-', '-', '-', '--']
+
+phasecomp_order = [
+    "Z_Ptrain",
+    "T_Strain",
+    "Z_Rayleigh",
+    "T_Love"
+]
+
+outfile = os.path.join(plotdir, 'measurements_histograms_combined.pdf')
+
+
+osl.plot.plot_measurements_histograms(measurements_comb, phasecomp_order, misfitlabels, misfitcolors, misfitlinestyles, outfile,
+                                      remove_outliers=False)
+    
+    
+# %% 
+# Store the measurements as a json file
+onp.utils.save_json(measurements, os.path.join(datadir, 'measurements_fix.json'))
 
 # %%
 gcmt_stf = osl.STF.triangle(

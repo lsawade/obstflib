@@ -5,6 +5,7 @@ import obspy
 import numpy as np
 import matplotlib.pyplot as plt
 import obsplotlib.plot as opl
+import obspy.clients
 from scipy import special
 import gf3d.utils
 from copy import deepcopy
@@ -12,149 +13,52 @@ from scipy import fft
 import shutil
 import obstflib as osl
 import obsplotlib.plot as opl
+import obspy
+# %% 
+# First get all the events in the area for the specified magnitude
+import obspy
+client = obspy.clients.fdsn.Client()
+minmag = 2.9
+maxmag = 3.1
+
+date = obspy.UTCDateTime("2008-01-24T12:00:00")
+t1 = date - 3600 * 24 # Plus one hour
+t2 = date + 3600 * 24 # Plus one hour
+latitude = 51.4344
+longitude = 6.7623
+maxradius = 1
+cat = client.get_events(starttime=t1, endtime=t2, minmagnitude=2.9, catalog="ISC",
+                        latitude=latitude, longitude=longitude, maxradius=maxradius)
+
+# %%
+# Get the origin time to dowload some data
+origin_time = cat[0].origins[0].time
+ev_lat = cat[0].origins[0].latitude
+ev_lon = cat[0].origins[0].longitude
+ev_mag = cat[0].magnitudes[0].mag
+ev_mag_type = cat[0].magnitudes[0].magnitude_type
+
+tshift = 60.0
+starttime = origin_time - tshift
+endtime = origin_time + 400.0
+
+# %%
+# Download waveforms
+network ='II' 
+station = 'BFO'
+inv = client.get_stations(network="II", station="BFO", starttime=starttime, endtime=endtime,
+                          level='response')
+
+# %%
+# Download corresponding waveforms
+raw = client.get_waveforms(network, station, "00", "BH*", starttime, endtime)
+
 
 # %%
 # Get Alaska STF
-
-# Files
-scardec_stf_dir = './STF/FCTs_20180123_093140_GULF_OF_ALASKA/'
-cmt_file = os.path.join(scardec_stf_dir, 'CMTSOLUTION')
-
-# Get Alaska STF
-scardec = osl.STF.scardecdir(scardec_stf_dir, 'optimal')
-
-# Get Alaska CMT solution
-cmt = osl.CMTSOLUTION.read(cmt_file)
-
-# This is the time vector of the STF
-t = np.arange(-10, 120, 0.1)
-
-# Interpolate the stf to the given time vector
-scardec.interp(t)
-
-# Create parameter dictionary for STF creation
-stf_dict = dict(
-    origin=scardec.origin,
-    t=t, hdur=cmt.hdur, tc=cmt.cmt_time - scardec.origin,
-    tshift=0.0, M0=cmt.M0 / 1e7)
-
-# Create STFs
-triangle = osl.STF.triangle(**stf_dict)
-boxcar = osl.STF.boxcar(**stf_dict)
-gaussian = osl.STF.gaussian(**stf_dict)
-error = osl.STF.error(**stf_dict)
-derrordt = error.gradient(new=True)
-
-# %%
-
-def plot_single_stf(ax, stf: osl.STF, title, *args, shift: bool = True, **kwargs):
-    """
-    Plots a single source time function.
-
-    Parameters
-    ----------
-    t : np.ndarray
-        Time vector.
-    stf : np.ndarray
-        Source time function.
-    title : str
-        Title of the plot.
-    """
-
-    stf.plot(*args, label=title, ax=ax, shift=shift, **kwargs)
-    ax.set_xlim(np.min(t), np.max(t))
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
-
-fig, axes = plt.subplots(6,1, sharex=True, figsize=(8, 6))
-
-# Plot scradec stf
-plot_single_stf(axes[0],scardec, 'SCARDEC', color='k')
-axes[0].legend(frameon=False)
-axes[0].set_ylim(0, None)
-plot_single_stf(axes[1], boxcar, 'Boxcar', color='k')
-axes[1].legend(frameon=False)
-axes[1].set_ylim(0, None)
-plot_single_stf(axes[2], triangle, 'GCMT', color='k')
-axes[2].legend(frameon=False)
-axes[2].set_ylim(0, None)
-
-plot_single_stf(axes[3], gaussian, 'SF3DG', color='k')
-axes[3].legend(frameon=False)
-axes[3].set_ylim(0, None)
-
-plot_single_stf(axes[4], error, 'Error', color='k')
-axes[4].legend(frameon=False)
-axes[4].set_ylim(0, None)
-
-
-plot_single_stf(axes[5], scardec, 'SCARDEC', color='tab:blue')
-plot_single_stf(axes[5], boxcar, 'Boxcar', color='tab:green')
-plot_single_stf(axes[5], triangle, 'GCMT', color='k')
-plot_single_stf(axes[5], gaussian, 'SF3DG', color='tab:orange')
-plot_single_stf(axes[5], derrordt, 'dError/dt', color='tab:red',
-                ls='-.')
-axes[5].legend(frameon=False)
-axes[5].set_ylim(0, None)
-
-
-plt.savefig('stf_wavelets.png', dpi=300)
-
-
-# %%
-# Get the event record at II BFO for the Alaska event using the GFManager
-from gf3d.source import CMTSOLUTION
-from gf3d.seismograms import GFManager
-
-# Get GCMT solution and set the half duration to 0 for GF extraction
-cmt_gcmt = CMTSOLUTION.read(cmt_file)
-cmt_gf = CMTSOLUTION.read(cmt_file)
-cmt_gf.hdur = 0
-cmt_gf.time_shift = 0
-
-
-# create CMT solution from scardec sdr and set half duration to 0
-cmt_scardec = CMTSOLUTION.from_sdr(
-    s=scardec.strike1, d=scardec.dip1, r=scardec.rake1, M0=scardec.M0 * 1e7,
-    origin_time=scardec.origin, depth=scardec.depth,
-    latitude=scardec.latitude, longitude=scardec.longitude)
-cmt_scardec.hdur = 0
-
-# %%
-# Subset
-gfm = GFManager('/lustre/orion/geo111/scratch/lsawade/STF_SUBSETS/FCTs_20180123_093140_GULF_OF_ALASKA/subset.h5')
-gfm.load()
-
-# %%
-# Get Seismograms
-network='II'
-station='BFO'
-gcmt_true = gfm.get_seismograms(cmt=cmt_gcmt).select(network=network, station=station, component='Z')
-gf_gcmt_raw = gfm.get_seismograms(cmt=cmt_gf, raw=True).select(network=network, station=station, component='Z')
-gf_scardec_raw = gfm.get_seismograms(cmt=cmt_scardec, raw=True).select(network=network, station=station, component='Z')
-
-
-# %%
-def convolve(trace: np.ndarray, stf: np.ndarray, dt: float, tshift: float) -> np.ndarray:
-
-    # For following FFTs
-    N = len(trace)
-    NP2 = gf3d.utils.next_power_of_2(2 * N)
-
-    # Fourier Transform the STF
-    TRACE = fft.fft(trace, n=NP2)
-    STF = fft.fft(stf, n=NP2)
-
-    # Compute correctional phase shift
-    shift = -tshift
-    phshift = np.exp(-1.0j * shift * np.fft.fftfreq(NP2, dt) * 2 * np.pi)
-
-    # Return the convolution
-    return np.real(fft.ifft(TRACE * STF * phshift))[:N] * dt
-
 
 # Process the reciprocal green function to first filter the resample
-def process(st, starttime, length_in_s, sps, tshift=200.0, step=False,
+def process(st, starttime, npts, sps, bp = [0.004, 1/17.0],
             inv: obspy.Inventory | None = None):
 
     # Taper the seismograms
@@ -165,104 +69,91 @@ def process(st, starttime, length_in_s, sps, tshift=200.0, step=False,
         st.detrend('linear')
         st.detrend('demean')
 
-        st.remove_response(inventory=inv, output='DISP',
-                           pre_filt=(0.001, 0.005, 1.0, 1/0.5),
-                           water_level=100)
+        st.remove_response(inventory=inv, output='DISP', water_level=5)
+                        #    pre_filt=(0.001, 0.005, 1.0, 1/0.5),
 
-    st.filter('bandpass', freqmin=0.004, freqmax=1/17.0, corners=3, zerophase=True)
-    st.interpolate(sampling_rate=sps, starttime=starttime-tshift,
-                   npts=int((length_in_s + tshift) * sps))
-
-    if step:
-        # Convolve the seismograms with the source time functions
-        for tr in st:
-            error = osl.STF.error(origin=obspy.UTCDateTime(0), t=tr.times(), tshift=tshift, hdur=1e-6, tc=0.0)
-            tr.data = convolve(tr.data, error.f, tr.stats.delta, tshift)
-
-st_gcmt_true = gcmt_true.copy()
-gf_gcmt = gf_gcmt_raw.copy()
-gf_scardec = gf_scardec_raw.copy()
-
-tshift = 150.0
-delta = 20.0
-npts = 3600
-
-process(st_gcmt_true, cmt_gcmt.origin_time, npts, delta, tshift=tshift, step=False)
-process(gf_gcmt, cmt_gcmt.origin_time, npts, delta, tshift=tshift, step=True)
-process(gf_scardec, cmt_gcmt.origin_time, npts, delta, tshift=tshift, step=True)
+    st.filter('bandpass', freqmin=bp[0], freqmax=bp[1], corners=3, zerophase=True)
+    st.interpolate(sampling_rate=sps, starttime=starttime,
+                   npts=npts)
+    
+    
+    # Rotate the traces
+    if inv:
+        st.rotate("->ZNE", inventory=inv)
 
 
-# Create source time functions for the seismograms
-st_gcmt_triangle = deepcopy(gf_gcmt)
-t = st_gcmt_triangle[0].times()
-stf_triangle = osl.STF.triangle(
-    origin=cmt_gcmt.origin_time, t=t, tc=cmt_gcmt.time_shift,
-    tshift=tshift, hdur=cmt_gcmt.hdur)
 
-# Convolve the setup streams with the
-st_gcmt_triangle[0].data = convolve(st_gcmt_triangle[0].data, stf_triangle.f, st_gcmt_triangle[0].stats.delta, tshift)
+bp = [5,20]
+
+st.plot(outfile='testdownload.pdf')
+
 
 # %%
 # Get P and S arrival for orientation
 
-# Get stations info
-idx = gfm.stations.index(station)
-station_latitude = gfm.latitudes[idx]
-station_longitude = gfm.longitudes[idx]
-
 # Compute arrivals
-arrivals = opl.get_arrivals(station_latitude, station_longitude, cmt_gcmt.latitude, cmt_gcmt.longitude, cmt_gcmt.depth, phase_list=['P', 'S'])
+arrivals = opl.get_arrivals(inv[0][0].latitude, inv[0][0].longitude, ev_lat, ev_lon, 0, phase_list=['P', 'S'], model='iasp91')
+
+def get_first_P_S(arrivals):
+    out = dict()
+    for _a in arrivals:
+        if _a.name not in out:
+            out[_a.name] = _a
+        else:
+            if out[_a.name].time > _a.time:
+                out[_a.name] = _a.time
+    return [val for val in out.values()]
+
+arrivals = get_first_P_S(arrivals)
+arrivals.sort(key=lambda x : x.time)
 
 # %%
 # Plot the raw, filtered and convolved seismograms
+st = raw.copy()
+delta = 100
+npts = 240 * delta
+bp = [1,10]
+
+process(st, origin_time, npts, delta, inv=inv, bp=bp)
+
+plt.rcParams['font.family'] = 'monospace'
+
+label = f"{network}.{station} - {origin_time}\n{bp[0]:.0f}-{bp[1]:.0f} Hz\n$M_L$ = {ev_mag:.1f}"
 
 # Create subplots and figures
 fig, axes = plt.subplots(3, 1, figsize=(8, 4.5))
 
-# Plot the seismograms
-ax_raw = axes[0]
-ax_step = axes[1]
-ax_tri = axes[2]
+arrivaldict = dict(lw=0.75, alpha=0.5, color='k', zorder=-10, textkwargs=dict(color='k', fontsize='medium', clip_on=False))
+for _i, _comp in enumerate([ 'E','N', 'Z' ]):
+    
 
-arrivaldict = dict(lw=0.5, alpha=0.5, color='tab:blue', zorder=-10)
+    axes[_i].set_zorder(-_i)
 
-# Add seismograms to the axes
-opl.trace([gf_gcmt_raw[0]], ax=ax_raw, lw=0.75, alpha=1.0, plot_labels=False,
-          labels=['Raw DB'], origin_time=cmt_gcmt.origin_time, limits=(0, 3600))
-opl.plot_arrivals(arrivals, ax=ax_raw, scale=2, timescale=60,
-                  **arrivaldict)
-opl.plot_arrivals(arrivals, ax=ax_raw, scale=0.0005, timescale=60,
-                  **arrivaldict)
-ax_raw.spines['bottom'].set_visible(False)
-ax_raw.set_xlabel('')
-ax_raw.tick_params(axis='x', which='both', labelbottom=False, bottom=False)
-
-opl.trace([gf_gcmt[0]], ax=ax_step, lw=0.75, alpha=1.0, plot_labels=False,
-          labels=['Filt.&Step'], origin_time=cmt_gcmt.origin_time, limits=(0, 3600))
-opl.plot_arrivals(arrivals, ax=ax_step, scale=2, timescale=60,
-                  **arrivaldict)
-ax_step.spines['bottom'].set_visible(False)
-ax_step.set_xlabel('')
-ax_step.tick_params(axis='x', which='both', labelbottom=False, bottom=False)
-
-
-opl.trace([st_gcmt_triangle[0]], ax=ax_tri, lw=0.75, alpha=1.0, plot_labels=False,
-          labels=['Conv. Triangle'], origin_time=cmt_gcmt.origin_time, limits=(0, 3600))
-opl.plot_arrivals(arrivals, ax=ax_tri, scale=2.0, timescale=60,
-                  **arrivaldict)
-
-# Little inset for the STF
-miniax = opl.axes_from_axes(ax_tri, 84932, [0.03, 0.3, 0.125, 0.5])
-stf_triangle.plot(ax=miniax, shift=True, color='k', lw=0.5)
-miniax.set_xlim(0, 70)
-miniax.set_xlabel('Time [s]', fontsize='x-small')
-# remove all ticks from miniax
-miniax.tick_params(axis='both', which='major', bottom=True, top=False, left=False, right=False, labelbottom=True, labelleft=False, labeltop=False, labelright=False,
-                   labelsize='x-small')
-
-
+    # Add seismograms to the axes
+    opl.trace([st.select(component=_comp)[0]], ax=axes[_i], lw=0.75, alpha=1.0, plot_labels=False,
+            labels=[_comp], origin_time=origin_time, limits=(35, 150))
+    if _i > 0:
+        arrivaldict['textkwargs']['alpha'] = 0.0
+        scale = 1.0 * np.max(np.abs(st.select(component=_comp)[0].data))
+    else: 
+        scale = 1.0 * np.max(np.asb(st.select(component=_comp)[0].data))
+    opl.plot_arrivals(arrivals, ax=axes[_i], scale=scale, timescale=1, origin_time=0, 
+                    **arrivaldict)
+    
+    if _i < 2:
+        axes[_i].set_xlabel('')
+        axes[_i].spines['bottom'].set_visible(False)
+        axes[_i].tick_params(axis='x', which='both', labelbottom=False, bottom=False)
+    else:
+        pass
+        # axes[_i].set_xlabel('Time since ')
+        
+opl.plot_label(axes[0], label, location=6, fontsize='medium', dist=-0.05, box=False)
+        
 plt.subplots_adjust(hspace=0.0, left=0.05, right=0.95, top=0.95, bottom=0.1)
 plt.savefig('processing_sequence.pdf', dpi=300)
+
+
 
 # %%
 # Get arrival to plot in the figure
